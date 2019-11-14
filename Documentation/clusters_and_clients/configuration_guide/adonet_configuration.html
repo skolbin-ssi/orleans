@@ -77,7 +77,46 @@
             <article class="content wrap" id="_content" data-uid="">
 <h1 id="adonet-database-configuration">ADO.NET Database Configuration</h1>
 
-<p>The following sections contain links to SQL scripts to configure your database as well as the corresponding ADO.NET invariant used to configure ADO.NET providers in Orleans. These scripts are intended to be customized if needed for your deployment.</p>
+<p>The following sections contain links to SQL scripts to configure your database as well as the corresponding ADO.NET invariant used to configure ADO.NET providers in Orleans.
+These scripts are intended to be customized if needed for your deployment.
+Before executing scripts for Clustering, Persiatence, or Reminders, one needs to create main tables with the Main scripts.</p>
+<h2 id="main-scripts">Main scripts</h2>
+<table>
+<thead>
+<tr>
+<th>Database</th>
+<th>Script</th>
+<th>NuGet Package</th>
+<th>ADO.NET Invariant</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQL Server</td>
+<td><a href="https://github.com/dotnet/orleans/blob/master/src/AdoNet/Shared/SQLServer-Main.sql">SQLServer-Main.sql</a></td>
+<td><a href="https://www.nuget.org/packages/System.Data.SqlClient/">System.Data.SqlClient</a></td>
+<td>System.Data.SqlClient</td>
+</tr>
+<tr>
+<td>MySQL / MariaDB</td>
+<td><a href="https://github.com/dotnet/orleans/blob/master/src/AdoNet/Shared/MySQL-Main.sql">MySQL-Main.sql</a></td>
+<td><a href="https://www.nuget.org/packages/MySql.Data/">MySql.Data</a></td>
+<td>MySql.Data.MySqlClient</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td><a href="https://github.com/dotnet/orleans/blob/master/src/AdoNet/Shared/PostgreSQL-Main.sql">PostgreSQL-Main.sql</a></td>
+<td><a href="https://www.nuget.org/packages/Npgsql/">Npgsql</a></td>
+<td>Npgsql</td>
+</tr>
+<tr>
+<td>Oracle</td>
+<td><a href="https://github.com/dotnet/orleans/blob/master/src/AdoNet/Shared/Oracle-Main.sql">Oracle-Main.sql</a></td>
+<td><a href="https://www.nuget.org/packages/Oracle.ManagedDataAccess/">ODP.net</a></td>
+<td>Oracle.DataAccess.Client</td>
+</tr>
+</tbody>
+</table>
 <h2 id="clustering">Clustering</h2>
 <table>
 <thead>

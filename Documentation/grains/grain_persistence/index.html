@@ -111,8 +111,8 @@
   private readonly IPersistentState&lt;CartState&gt; _cart;
 
   public UserGrain(
-    [PersistentState(&quot;profile&quot;, &quot;myGrainStorage&quot;)] IPersistentState&lt;ProfileState&gt; profile,
-    [PersistentState(&quot;cart&quot;, &quot;cartStorage&quot;)] IPersistentState&lt;CartState&gt; cart,
+    [PersistentState(&quot;profile&quot;, &quot;profileStore&quot;)] IPersistentState&lt;ProfileState&gt; profile,
+    [PersistentState(&quot;cart&quot;, &quot;cartStore&quot;)] IPersistentState&lt;CartState&gt; cart,
     )
   {
     _profile = profile;
@@ -141,7 +141,7 @@ This will reload the grain state from persistent store, via the storage provider
 <p>The <code>ClearStateAsync()</code> method clears the grain&#39;s state in storage. Depending on the provider, this operation may optionally delete the grain state entirely.</p>
 <h2 id="getting-started">Getting Started</h2>
 <p>Before a grain can use persistence, a storage provider must be configured on the silo.</p>
-<p>First, configure a storage provider:</p>
+<p>First, configure storage providers, one for profile state and one for cart state:</p>
 <pre><code class="lang-csharp">var host = new HostBuilder()
   .UseOrleans(siloBuilder =&gt;
   {
@@ -155,7 +155,19 @@ This will reload the grain state from persistent store, via the storage provider
 
         // Configure the storage connection key
         options.ConnectionString = &quot;DefaultEndpointsProtocol=https;AccountName=data1;AccountKey=SOMETHING1&quot;;
-      });
+      })
+
+      // Configure Azure Blob storage using the name &quot;cartStore&quot;
+      .AddAzureBlobGrainStorage(
+        name: &quot;cartStore&quot;,
+        configureOptions: options =&gt;
+        {
+            // Use JSON for serializing the state in storage
+            options.UseJson = true;
+
+            // Configure the storage connection key
+            options.ConnectionString = &quot;DefaultEndpointsProtocol=https;AccountName=data2;AccountKey=SOMETHING2&quot;;
+        });
     // -- other options
   })
   .Build();
