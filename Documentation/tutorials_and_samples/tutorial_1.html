@@ -127,7 +127,7 @@ You will also probably need to add <code>using</code> statements.</p>
 </ol>
 <p><code>Microsoft.Orleans.Server</code> and <code>Microsoft.Orleans.Client</code> are meta-packages that bring dependency that you will most likely need on the Silo and Client side.</p>
 <p><code>Microsoft.Orleans.Core.Abstractions</code> is needed everywhere. It included in both <code>Microsoft.Orleans.Server</code> and <code>Microsoft.Orleans.Client</code>.</p>
-<p><code>Microsoft.Orleans.CodeGenerator.MSBuild</code> automatically generates code that is needed to make calls to grains pass machine boundaries. So it needed in both <code>GrainInterfaces</code> and <code>Grains</code> projects.</p>
+<p><code>Microsoft.Orleans.CodeGenerator.MSBuild</code> automatically generates code that is needed to make calls to grains across machine boundaries. So it needed in both <code>GrainInterfaces</code> and <code>Grains</code> projects.</p>
 <h2 id="define-a-grain-interface">Define a Grain Interface</h2>
 <p>In the GrainInterfaces project, add a <code>IHello.cs</code> code file and define the following IHello interface in it:</p>
 <pre><code class="lang-csharp">using System.Threading.Tasks;
