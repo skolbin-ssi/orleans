@@ -36,7 +36,8 @@ namespace Orleans
 
         private ClientProviderRuntime clientProviderRuntime;
 
-        internal ClientStatisticsManager ClientStatistics;
+        internal readonly ClientStatisticsManager ClientStatistics;
+        private readonly MessagingTrace messagingTrace;
         private GrainId clientId;
         private readonly GrainId handshakeClientId;
         private ThreadTrackingStatistic incomingMessagesThreadTimeTracking;
@@ -89,13 +90,15 @@ namespace Orleans
             IOptions<StatisticsOptions> statisticsOptions,
             ApplicationRequestsStatisticsGroup appRequestStatistics,
             StageAnalysisStatisticsGroup schedulerStageStatistics,
-            ClientStatisticsManager clientStatisticsManager)
+            ClientStatisticsManager clientStatisticsManager,
+            MessagingTrace messagingTrace)
         {
             this.loggerFactory = loggerFactory;
             this.statisticsOptions = statisticsOptions;
             this.appRequestStatistics = appRequestStatistics;
             this.schedulerStageStatistics = schedulerStageStatistics;
             this.ClientStatistics = clientStatisticsManager;
+            this.messagingTrace = messagingTrace;
             this.logger = loggerFactory.CreateLogger<OutsideRuntimeClient>();
             this.handshakeClientId = GrainId.NewClientId();
             callbacks = new ConcurrentDictionary<CorrelationId, CallbackData>();
@@ -137,13 +140,13 @@ namespace Orleans
                 }
 
                 this.InternalGrainFactory = this.ServiceProvider.GetRequiredService<IInternalGrainFactory>();
-                this.ClientStatistics = this.ServiceProvider.GetRequiredService<ClientStatisticsManager>();
                 this.messageFactory = this.ServiceProvider.GetService<MessageFactory>();
 
                 var serializationManager = this.ServiceProvider.GetRequiredService<SerializationManager>();
                 this.localObjects = new InvokableObjectManager(
                     this,
                     serializationManager,
+                    this.messagingTrace,
                     this.loggerFactory.CreateLogger<InvokableObjectManager>());
 
                 var timerLogger = this.loggerFactory.CreateLogger<SafeTimer>();
@@ -358,7 +361,7 @@ namespace Orleans
         public void SendResponse(Message request, Response response)
         {
             var message = this.messageFactory.CreateResponseMessage(request);
-            EventSourceUtils.EmitEvent(message, OrleansOutsideRuntimeClientEvent.SendResponseAction);
+            OrleansOutsideRuntimeClientEvent.Log.SendResponse(message);
             message.BodyObject = response;
 
             transport.SendMessage(message);
@@ -369,7 +372,7 @@ namespace Orleans
         public void SendRequest(GrainReference target, InvokeMethodRequest request, TaskCompletionSource<object> context, string debugContext = null, InvokeMethodOptions options = InvokeMethodOptions.None, string genericArguments = null)
         {
             var message = this.messageFactory.CreateMessage(request, options);
-            EventSourceUtils.EmitEvent(message, OrleansOutsideRuntimeClientEvent.SendRequestAction);
+            OrleansOutsideRuntimeClientEvent.Log.SendRequest(message);
             SendRequestMessage(target, message, context, debugContext, options, genericArguments);
         }
 
@@ -420,7 +423,7 @@ namespace Orleans
 
         public void ReceiveResponse(Message response)
         {
-            EventSourceUtils.EmitEvent(response, OrleansOutsideRuntimeClientEvent.ReceiveResponseAction);
+            OrleansOutsideRuntimeClientEvent.Log.ReceiveResponse(response);
 
             if (logger.IsEnabled(LogLevel.Trace)) logger.Trace("Received {0}", response);
 
@@ -596,7 +599,6 @@ namespace Orleans
             if (ClientStatistics != null)
             {
                 Utils.SafeExecute(() => ClientStatistics.Dispose());
-                ClientStatistics = null;
             }
 
             Utils.SafeExecute(() => (this.ServiceProvider as IDisposable)?.Dispose());
