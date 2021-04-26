@@ -1,6 +1,7 @@
 using System;
+using Microsoft.Extensions.Configuration;
+using Orleans;
 using Orleans.Hosting;
-using Orleans.Streams;
 using Orleans.TestingHost;
 using Tester.StreamingTests;
 using TestExtensions;
@@ -19,19 +20,20 @@ namespace ServiceBus.Tests.Streaming
         {
             protected override void ConfigureTestCluster(TestClusterBuilder builder)
             {
-                builder.AddSiloBuilderConfigurator<MySiloBuilderConfigurator>();
+                builder.AddSiloBuilderConfigurator<TestClusterConfigurator>();
+                builder.AddClientBuilderConfigurator<TestClusterConfigurator>();
             }
 
-            private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class TestClusterConfigurator : ISiloConfigurator, IClientBuilderConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder
                         .AddEventHubStreams(StreamProviderName, b=>
                         {
                             b.ConfigureEventHub(ob => ob.Configure(options =>
                             {
-                                options.ConnectionString = TestDefaultConfiguration.EventHubConnectionString;
+                                options.ConfigureTestDefaults();
                                 options.ConsumerGroup = EHConsumerGroup;
                                 options.Path = EHPath;
                             }));
@@ -47,7 +49,7 @@ namespace ServiceBus.Tests.Streaming
                         {
                             b.ConfigureEventHub(ob => ob.Configure(options =>
                             {
-                                options.ConnectionString = TestDefaultConfiguration.EventHubConnectionString;
+                                options.ConfigureTestDefaults();
                                 options.ConsumerGroup = EHConsumerGroup;
                                 options.Path = EHPath2;
 
@@ -62,6 +64,8 @@ namespace ServiceBus.Tests.Streaming
                     hostBuilder
                           .AddMemoryGrainStorage("PubSubStore");
                 }
+
+                public void Configure(IConfiguration configuration, IClientBuilder clientBuilder) => clientBuilder.AddStreaming();
             }
         }
 

@@ -10,10 +10,6 @@ using Xunit;
 using Tester;
 using Orleans.Internal;
 
-#if !NETCOREAPP
-using System.Runtime.Remoting.Messaging;
-#endif
-
 namespace UnitTests.General
 {
     [Collection(TestEnvironmentFixture.DefaultCollection)]
@@ -23,7 +19,6 @@ namespace UnitTests.General
 
         private static bool oldPropagateActivityId;
 
-        private static readonly SafeRandom random = new SafeRandom();
         private readonly TestEnvironmentFixture fixture;
 
         public RequestContextTests_Local(TestEnvironmentFixture fixture)
@@ -34,7 +29,6 @@ namespace UnitTests.General
             RequestContextTestUtils.SetActivityId(Guid.Empty);
             RequestContext.Clear();
             headers.Clear();
-            this.fixture.RuntimeClient.ClientInvokeCallback = null;
         }
 
         public void Dispose()
@@ -47,14 +41,13 @@ namespace UnitTests.General
             RequestContextTestUtils.ClearActivityId();
             RequestContext.Clear();
             headers.Clear();
-            this.fixture.RuntimeClient.ClientInvokeCallback = null;
         }
 
         [Fact, TestCategory("Functional"), TestCategory("RequestContext")]
         public async Task RequestContext_MultiThreads_ExportToMessage()
         {
             const int NumLoops = 50;
-            string id = "key" + random.Next();
+            string id = "key" + ThreadSafeRandom.Next();
 
             Message msg = new Message();
             Task[] promises = new Task[NumLoops];
@@ -191,185 +184,12 @@ namespace UnitTests.General
             TestCleanup();
         }
 
-#if !NETCOREAPP
-
-        [Fact, TestCategory("Functional"), TestCategory("RequestContext")]
-        public async Task LCC_Basic()
-        {
-            string name1 = "Name" + random.Next();
-            string data1 = "Main";
-            const int NumLoops = 1000;
-
-            CallContext.LogicalSetData(name1, data1);
-
-            Assert.Equal(data1, CallContext.LogicalGetData(name1));
-
-            Task t = Task.Run(() =>
-            {
-                Assert.Equal(data1, CallContext.LogicalGetData(name1));
-            });
-            await t;
-
-            Task[] promises = new Task[NumLoops];
-            for (int i = 0; i < NumLoops; i++)
-            {
-                string str = i.ToString(CultureInfo.InvariantCulture);
-                promises[i] = Task.Run(async () =>
-                {
-                    CallContext.LogicalSetData(name1, str);
-
-                    await Task.Delay(10);
-
-                    Assert.Equal(str, CallContext.LogicalGetData(name1));  // "LCC.GetData-Task.Run-"+str
-                });
-            }
-            await Task.WhenAll(promises);
-        }
-
-        [Fact, TestCategory("Functional"), TestCategory("RequestContext")]
-        public async Task LCC_Dictionary()
-        {
-            string name1 = "Name" + random.Next();
-            string data1 = "Main";
-            const int NumLoops = 1000;
-
-            var dict = new Dictionary<string, string>();
-            dict[name1] = data1;
-            CallContext.LogicalSetData(name1, dict);
-
-            var result1 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-            Assert.Equal(data1, result1[name1]);  // "LCC.GetData-Main"
-
-            Task t = Task.Run(() =>
-            {
-                var result2 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                Assert.Equal(data1, result2[name1]);  // "LCC.GetData-Task.Run"
-                Assert.Same(dict, result2);  // "Same object LCC.GetData-Task.Run"
-            });
-            await t;
-
-            Task[] promises = new Task[NumLoops];
-            for (int i = 0; i < NumLoops; i++)
-            {
-                string str = i.ToString(CultureInfo.InvariantCulture);
-                promises[i] = Task.Run(async () =>
-                {
-                    var dict2 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Equal(data1, dict2[name1]);  // "LCC.GetData-Task.Run-Get-" + str
-                    Assert.Same(dict, dict2);  // "Same object LCC.GetData-Task.Run-Get" + str
-
-                    var dict3 = new Dictionary<string, string>();
-                    dict3[name1] = str;
-                    CallContext.LogicalSetData(name1, dict3);
-
-                    await Task.Delay(10);
-
-                    var result3 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Equal(str, result3[name1]);  // "LCC.GetData-Task.Run-Set-" + str
-                    Assert.Same(dict3, result3);  // "Same object LCC.GetData-Task.Run-Set-" + str
-                    Assert.NotSame(dict2, result3);  // "Different object LCC.GetData-Task.Run-Set-" + str
-                });
-            }
-            await Task.WhenAll(promises);
-        }
-
-        [Fact, TestCategory("Functional"), TestCategory("RequestContext")]
-        public async Task LCC_CrossThread()
-        {
-            const int NumLoops = 1000;
-
-            string name1 = "Name" + random.Next();
-            string data1 = "Main";
-
-            CallContext.LogicalSetData(name1, data1);
-            Assert.Equal(data1, CallContext.LogicalGetData(name1));  // "LCC.GetData-Main"
-
-            Task[] promises = new Task[NumLoops];
-            for (int i = 0; i < NumLoops; i++)
-            {
-                string str = i.ToString(CultureInfo.InvariantCulture);
-                promises[i] = Task.Run(async () =>
-                {
-                    await Task.Delay(5);
-                    Assert.Equal(data1, CallContext.LogicalGetData(name1));  // "LCC.GetData-Main"
-                    await Task.Delay(5);
-                    CallContext.LogicalSetData(name1, str);
-                    Assert.Equal(str, CallContext.LogicalGetData(name1));  // "LCC.GetData-Task.Run-1-" + str
-                    await Task.Delay(5);
-                    Assert.Equal(str, CallContext.LogicalGetData(name1));  // "LCC.GetData-Task.Run-1-" + str
-                    await Task.Delay(5);
-                    Assert.Equal(str, CallContext.LogicalGetData(name1));  // "LCC.GetData-Task.Run-2-" + str
-                });
-            }
-            await Task.WhenAll(promises);
-            Assert.Equal(data1, CallContext.LogicalGetData(name1));  // "LCC.GetData-Main-Final"
-        }
-
-        [Fact, TestCategory("Functional"), TestCategory("RequestContext")]
-        public async Task LCC_CrossThread_Dictionary()
-        {
-            const int NumLoops = 1000;
-
-            string name1 = "Name" + random.Next();
-            string data1 = "Main";
-
-            var dict = new Dictionary<string, string>();
-            dict[name1] = data1;
-            CallContext.LogicalSetData(name1, dict);
-
-            var result0 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-            Assert.Equal(data1, result0[name1]);  // "LCC.GetData-Main"
-
-            Task[] promises = new Task[NumLoops];
-            for (int i = 0; i < NumLoops; i++)
-            {
-                string str = i.ToString(CultureInfo.InvariantCulture);
-                promises[i] = Task.Run(async () =>
-                {
-                    var result1 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Same(dict, result1);  // "Same object LCC.GetData-Task.Run-Get" + str
-                    Assert.Equal(data1, result1[name1]);  // "LCC.GetData-Task.Run-Get-" + str
-
-                    await Task.Delay(5);
-
-                    var dict2 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Same(dict, dict2);  // "Same object LCC.GetData-Task.Run-Get" + str
-                    Assert.Equal(data1, dict2[name1]);  // "LCC.GetData-Task.Run-Get-" + str
-
-                    // Set New Dictionary
-                    var dict3 = new Dictionary<string, string>();
-                    dict3[name1] = str;
-                    CallContext.LogicalSetData(name1, dict3);
-
-                    var result3 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Same(dict3, result3);  // "Same object LCC.GetData-Task.Run-Set-1-" + str
-                    Assert.Equal(str, result3[name1]);  // "LCC.GetData-Task.Run-Set-" + str
-
-                    await Task.Delay(5);
-
-                    result3 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Same(dict3, result3);  // "Same object LCC.GetData-Task.Run-Set-1-" + str
-                    Assert.Equal(str, result3[name1]);  // "LCC.GetData-Task.Run-Set-" + str
-
-                    await Task.Delay(5);
-                    result3 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-                    Assert.Same(dict3, result3);  // "Same object LCC.GetData-Task.Run-Set-2-" + str
-                    Assert.Equal(str, result3[name1]);  // "LCC.GetData-Task.Run-Set-" + str
-                });
-            }
-            await Task.WhenAll(promises);
-            result0 = (Dictionary<string, string>)CallContext.LogicalGetData(name1);
-            Assert.Same(dict, result0);  // "Same object LCC.GetData-Task.Run-Get"
-            Assert.Equal(data1, result0[name1]);  // "LCC.GetData-Main-Final"
-        }
-#endif
-
         [Fact, TestCategory("Functional"), TestCategory("RequestContext")]
         public async Task RequestContext_CrossThread()
         {
             const int NumLoops = 1000;
 
-            string name1 = "Name" + random.Next();
+            string name1 = "Name" + ThreadSafeRandom.Next();
             string data1 = "Main";
 
             RequestContext.Set(name1, data1);

@@ -29,27 +29,27 @@ namespace Tester.AzureUtils.Persistence
                 builder.AddClientBuilderConfigurator<ClientBuilderConfigurator>();
             }
 
-            private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class MySiloBuilderConfigurator : ISiloConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder
                         .AddAzureTableGrainStorage("GrainStorageForTest", builder => builder.Configure<IOptions<ClusterOptions>>((options, silo) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                             options.DeleteStateOnClear = true;
                         }))
                         .AddAzureTableGrainStorage("AzureStore1", builder => builder.Configure<IOptions<ClusterOptions>>((options, silo) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                         }))
                         .AddAzureTableGrainStorage("AzureStore2", builder => builder.Configure<IOptions<ClusterOptions>>((options, silo) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                         }))
                         .AddAzureTableGrainStorage("AzureStore3", builder => builder.Configure<IOptions<ClusterOptions>>((options, silo) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                         }))
                         .AddMemoryGrainStorage("MemoryStore");
                 }

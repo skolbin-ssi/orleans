@@ -1,29 +1,19 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <TargetFrameworks>$(TestTargetFrameworks)</TargetFrameworks>
     <OrleansBuildTimeCodeGen>true</OrleansBuildTimeCodeGen>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="Orleans.Connections.Security.Tests.xunit.runner.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="$(SystemRuntimeCompilerServicesUnsafeVersion)" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="$(MicrosoftTestSdkVersion)" />
     <PackageReference Include="xunit" Version="$(xUnitVersion)" />
     <PackageReference Include="xunit.runner.visualstudio" Version="$(xUnitVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="$(MicrosoftExtensionsHostingVersion)" />
-  </ItemGroup>
-
-  <ItemGroup Condition=" '$(BuildingInsideVisualStudio)' == 'true'">
-    <PackageReference Include="xunit.runner.visualstudio" Version="$(xUnitVersion)" />
+    <PackageReference Include="NETStandard.Library" Version="2.0.3" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Orleans.Connections.Security\Orleans.Connections.Security.csproj" />
     <ProjectReference Include="..\..\src\Orleans.TestingHost\Orleans.TestingHost.csproj" />
   </ItemGroup>
 

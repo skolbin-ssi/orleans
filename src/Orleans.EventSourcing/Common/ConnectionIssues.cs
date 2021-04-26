@@ -1,13 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Orleans.LogConsistency;
+using System;
+using Orleans.Internal;
 
 namespace Orleans.EventSourcing.Common
 {
-
     /// <summary>
     /// Describes a connection issue that occurred when sending update notifications to remote instances.
     /// </summary>
@@ -51,32 +46,17 @@ namespace Orleans.EventSourcing.Common
 
             var backoff = previous.Value.TotalMilliseconds;
 
-            if (random == null)
-                random = new Random();
-
             // grows exponentially up to slowpoll interval
             if (previous.Value.TotalMilliseconds < slowpollinterval)
-                backoff = (int)((backoff + random.Next(5, 15)) * 1.5);
+                backoff = (int)((backoff + ThreadSafeRandom.Next(5, 15)) * 1.5);
 
             // during slowpoll, slightly randomize
             if (backoff > slowpollinterval)
-                backoff = slowpollinterval + random.Next(1, 200);
+                backoff = slowpollinterval + ThreadSafeRandom.Next(1, 200);
 
             return TimeSpan.FromMilliseconds(backoff);
         }
 
-
-        [ThreadStatic]
-        static Random random;
-
         private const int slowpollinterval = 10000;
     }
-
-
-
-
-
-
-
-
 }

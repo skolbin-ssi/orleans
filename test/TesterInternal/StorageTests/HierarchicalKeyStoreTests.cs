@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Linq;
 using Orleans.Configuration;
 using Orleans.Runtime;
-using Orleans.Runtime.Configuration;
 using Orleans.Storage;
 using Xunit;
 
@@ -28,93 +27,6 @@ namespace UnitTests.StorageTests
         private const string ValueName3 = "Value3";
 
         private static int _keyCounter = 1;
-
-        [Fact, TestCategory("Functional"), TestCategory("MemoryStore")]
-        public void Comparer_InsideRange()
-        {
-            string testName = Guid.NewGuid().ToString(); //TestContext.TestName;
-
-            string rangeParamName = "Column1";
-            string fromValue = "Rem10";
-            string toValue = "Rem11";
-
-            var compareClause = MemoryGrainStorage.GetComparer(rangeParamName, fromValue, toValue);
-
-            var data = new Dictionary<string, object>();
-
-            data[rangeParamName] = "Rem09";
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem10";
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem11";
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem12";
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = testName;
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-        }
-
-        [Fact, TestCategory("Functional"), TestCategory("MemoryStore")]
-        public void Comparer_OutsideRange()
-        {
-            string testName = Guid.NewGuid().ToString(); //TestContext.TestName;
-
-            string rangeParamName = "Column1";
-            string toValue = "Rem10";
-            string fromValue = "Rem12";
-
-            var compareClause = MemoryGrainStorage.GetComparer(rangeParamName, fromValue, toValue);
-
-            var data = new Dictionary<string, object>();
-
-            data[rangeParamName] = "Rem09";
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem10";
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem11";
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem12";
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = testName;
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-        }
-
-        [Fact, TestCategory("Functional"), TestCategory("MemoryStore")]
-        public void Comparer_SameRange()
-        {
-            string testName = Guid.NewGuid().ToString(); //TestContext.TestName;
-
-            string rangeParamName = "Column1";
-            string fromValue = "Rem11";
-            string toValue = "Rem11";
-
-            var compareClause = MemoryGrainStorage.GetComparer(rangeParamName, fromValue, toValue);
-
-            var data = new Dictionary<string, object>();
-
-            data[rangeParamName] = "Rem09";
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem10";
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem11";
-            Assert.True(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = "Rem12";
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-
-            data[rangeParamName] = testName;
-            Assert.False(compareClause(data), $"From={fromValue} To={toValue} Compare Value={data[rangeParamName]}");
-        }
 
         [Fact, TestCategory("Functional"), TestCategory("MemoryStore")]
         public void HKS_MakeKey()
@@ -147,8 +59,7 @@ namespace UnitTests.StorageTests
             data.Add(ValueName1, testName);
 
             var store = new HierarchicalKeyStore(1);
-
-            string eTag = store.WriteRow(keys, data, null);
+            _ = store.WriteRow(keys, data, null);
 
             var result = store.ReadRow(keys);
 
@@ -177,8 +88,7 @@ namespace UnitTests.StorageTests
             data.Add(ValueName1, testName);
 
             var store = new HierarchicalKeyStore(2);
-
-            string eTag = store.WriteRow(keys, data, null);
+            _ = store.WriteRow(keys, data, null);
 
             var result = store.ReadRow(keys);
 
@@ -211,8 +121,7 @@ namespace UnitTests.StorageTests
             data[ValueName3] = testName + 3;
 
             var store = new HierarchicalKeyStore(3);
-
-            string eTag = store.WriteRow(keys, data, null);
+            _ = store.WriteRow(keys, data, null);
 
             var result = store.ReadRow(keys);
 
@@ -246,7 +155,7 @@ namespace UnitTests.StorageTests
             data[ValueName3] = "Three";
 
             // Write #2
-            string newEtag = store.WriteRow(keys, data, eTag);
+            _ = store.WriteRow(keys, data, eTag);
 
             var result = store.ReadRow(keys);
 
@@ -317,8 +226,7 @@ namespace UnitTests.StorageTests
             data[ValueName3] = testName + 3;
 
             var store = new HierarchicalKeyStore(keys.Count);
-
-            string eTag = store.WriteRow(keys, data, null);
+            _ = store.WriteRow(keys, data, null);
 
             var readKeys = new List<Tuple<string, string>>();
             readKeys.Add(keys.First());
@@ -340,7 +248,7 @@ namespace UnitTests.StorageTests
         [Fact, TestCategory("Functional"), TestCategory("MemoryStore")]
         public void HKS_KeyNotFound()
         {
-            string testName = Guid.NewGuid().ToString(); //TestContext.TestName;
+            _ = Guid.NewGuid().ToString(); //TestContext.TestName;
 
             int key1 = _keyCounter++;
             int key2 = _keyCounter++;

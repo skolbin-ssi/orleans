@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Fabric;
 using System.Fabric.Description;
@@ -56,7 +56,7 @@ namespace TestServiceFabric
             };
 
             activationContext.GetEndpoints().Returns(_ => endpoints);
-            
+
             var listener = new OrleansCommunicationListener(
                 builder =>
                 {
@@ -67,7 +67,6 @@ namespace TestServiceFabric
                             services.Replace(ServiceDescriptor.Singleton<ISiloHost>(sp => Substitute.ForPartsOf<MockSiloHost>(sp)));
                         });
 
-                    builder.ConfigureApplicationParts(parts => parts.AddFromApplicationBaseDirectory());
                     builder.UseLocalhostClustering();
                     builder.Configure<EndpointOptions>(options =>
                     {
@@ -75,7 +74,7 @@ namespace TestServiceFabric
                         options.GatewayPort = 8888;
                     });
                 });
-            
+
             var result = await listener.OpenAsync(CancellationToken.None);
 
             var siloHost = listener.Host;
@@ -118,7 +117,6 @@ namespace TestServiceFabric
                             services.Replace(ServiceDescriptor.Singleton<ISiloHost>(sp => Substitute.ForPartsOf<MockSiloHost>(sp)));
                         });
 
-                    builder.ConfigureApplicationParts(parts => parts.AddFromApplicationBaseDirectory());
                     builder.Configure<EndpointOptions>(options =>
                     {
                         options.SiloPort = 9082;
@@ -156,7 +154,6 @@ namespace TestServiceFabric
                             services.Replace(ServiceDescriptor.Singleton<ISiloHost>(sp => Substitute.ForPartsOf<MockSiloHost>(sp)));
                         });
 
-                    builder.ConfigureApplicationParts(parts => parts.AddFromApplicationBaseDirectory());
                     builder.Configure<EndpointOptions>(options =>
                     {
                         options.SiloPort = 9082;
@@ -178,11 +175,11 @@ namespace TestServiceFabric
             var endpoint = new EndpointResourceDescription { Name = name };
             typeof(EndpointResourceDescription).GetProperty("Port")
                 .GetSetMethod(true)
-                .Invoke(endpoint, new object[] {port});
+                .Invoke(endpoint, new object[] { port });
 
             return endpoint;
         }
-        
+
         public class MockSiloHost : ISiloHost
         {
             private readonly TaskCompletionSource<int> stopped = new TaskCompletionSource<int>();
@@ -215,6 +212,14 @@ namespace TestServiceFabric
             public void Dispose()
             {
             }
+
+            public ValueTask DisposeAsync() => default;
         }
     }
+
+    /// <summary>
+    /// A grain which is not used but which satisfies startup configuration checks.
+    /// </summary>
+    public class UnusedGrain : Grain { }
+    public interface IUnusedGrain : IGrain { }
 }

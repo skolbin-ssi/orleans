@@ -6,11 +6,13 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Newtonsoft.Json;
 using Orleans;
 using Orleans.Configuration;
 using Orleans.Configuration.Internal;
 using Orleans.Configuration.Validators;
 using Orleans.Hosting;
+using Orleans.Metadata;
 using Orleans.Runtime;
 using Orleans.Runtime.Configuration;
 using Orleans.Statistics;
@@ -342,7 +344,10 @@ namespace NonSilo.Tests
                 {
                     // Add only an assembly with generated serializers but no grain interfaces or grain classes
                     siloBuilder.UseLocalhostClustering()
-                    .ConfigureApplicationParts(parts => parts.AddApplicationPart(typeof(ClassReferencingOrleansTypeDto).Assembly));
+                    .ConfigureApplicationParts(parts =>
+                    {
+                        parts.ClearApplicationParts();
+                    });
                 }).Build();
 
             await Assert.ThrowsAsync<OrleansConfigurationException>(() => host.StartAsync());

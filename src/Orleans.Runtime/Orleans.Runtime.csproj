@@ -4,22 +4,10 @@
     <Title>Microsoft Orleans Runtime</Title>
     <Description>Core runtime library of Microsoft Orleans that hosts and executes grains within a silo.</Description>
     <TargetFrameworks>$(MultiTargetFrameworks)</TargetFrameworks>
-  </PropertyGroup>
-
-  <PropertyGroup>
-    <RootNamespace>Orleans.Runtime</RootNamespace>
-    <AssemblyName>Orleans.Runtime</AssemblyName>
     <OrleansBuildTimeCodeGen>true</OrleansBuildTimeCodeGen>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Connections.Abstractions" Version="$(MicrosoftAspNetCoreConnectionsAbstractionsVersion)" />
-    <PackageReference Include="System.Buffers" Version="$(SystemBuffersVersion)" />
-    <PackageReference Include="System.Memory" Version="$(SystemMemoryVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="$(MicrosoftExtensionsOptionsVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="$(MicrosoftExtensionsHostingAbstractionsVersion)" />
-    <PackageReference Include="System.Threading.Tasks.Extensions" Version="$(SystemThreadingTasksExtensionsVersion)" />
-    <PackageReference Include="System.Threading.Channels" Version="$(SystemThreadingChannelsVersion)" />
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETStandard'">
+    <PackageReference Include="System.Reflection.Metadata" Version="$(SystemReflectionMetadataVersion)" />
   </ItemGroup>
-
 </Project>

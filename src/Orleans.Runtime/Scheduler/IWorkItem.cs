@@ -1,16 +1,15 @@
 using System;
-
+using System.Threading;
 
 namespace Orleans.Runtime.Scheduler
 {
-    internal interface IWorkItem
+    internal interface IWorkItem : IThreadPoolWorkItem
     {
         string Name { get; }
         WorkItemType ItemType { get; }
-        ISchedulingContext SchedulingContext { get; set; }
+        IGrainContext GrainContext { get; }
         TimeSpan TimeSinceQueued { get; }
         DateTime TimeQueued { get; set;  }
         bool IsSystemPriority { get; }
-        void Execute();
     }
 }

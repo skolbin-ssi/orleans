@@ -17,14 +17,12 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
         private readonly ICompilationAssemblyResolver assemblyResolver;
 
         private readonly DependencyContext resolverRependencyContext;
-#if NETCOREAPP
         private readonly AssemblyLoadContext loadContext;
-#endif
 
         public AssemblyResolver()
         {
             this.resolverRependencyContext = DependencyContext.Load(typeof(AssemblyResolver).Assembly);
-            var codegenPath = Path.GetDirectoryName(new Uri(typeof(AssemblyResolver).Assembly.CodeBase).LocalPath);
+            var codegenPath = Path.GetDirectoryName(new Uri(typeof(AssemblyResolver).Assembly.Location).LocalPath);
             this.assemblyResolver = new CompositeCompilationAssemblyResolver(
                 new ICompilationAssemblyResolver[]
                 {
@@ -34,27 +32,23 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
                 });
 
             AppDomain.CurrentDomain.AssemblyResolve += this.ResolveAssembly;
-#if NETCOREAPP
             this.loadContext = AssemblyLoadContext.GetLoadContext(typeof(AssemblyResolver).Assembly);
             this.loadContext.Resolving += this.AssemblyLoadContextResolving;
             if (this.loadContext != AssemblyLoadContext.Default)
             {
                 AssemblyLoadContext.Default.Resolving += this.AssemblyLoadContextResolving;
             }
-#endif
         }
 
         public void Dispose()
         {
             AppDomain.CurrentDomain.AssemblyResolve -= this.ResolveAssembly;
 
-#if NETCOREAPP
             this.loadContext.Resolving -= this.AssemblyLoadContextResolving;
             if (this.loadContext != AssemblyLoadContext.Default)
             {
                 AssemblyLoadContext.Default.Resolving -= this.AssemblyLoadContextResolving;
             }
-#endif
         }
 
         /// <summary>
@@ -107,22 +101,12 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
         {
             try
             {
-#if NETCOREAPP
                 return this.loadContext.LoadFromAssemblyPath(path);
-#else
-                return Assembly.LoadFrom(path);
-#endif
             }
             catch
             {
                 return null;
             }
         }
-
-#if !NETCOREAPP
-        internal class AssemblyLoadContext
-        {
-        }
-#endif
     }
 }

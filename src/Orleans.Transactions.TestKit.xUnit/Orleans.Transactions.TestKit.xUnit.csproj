@@ -5,6 +5,8 @@
     <Description>xUnit testkit library for transactions</Description>
     <PackageTags>$(PackageTags) TransactionTestKit</PackageTags>
     <TargetFrameworks>$(StandardTargetFrameworks)</TargetFrameworks>
+    <OrleansBuildTimeCodeGen>true</OrleansBuildTimeCodeGen>
+    <IsOrleansFrameworkPart>false</IsOrleansFrameworkPart>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -13,7 +15,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="xunit" Version="$(xUnitVersion)" />
+    <PackageReference Include="xunit.extensibility.core" Version="$(xUnitVersion)" />
+    <PackageReference Include="xunit.extensibility.execution" Version="$(xUnitVersion)" />
+    <PackageReference Include="xunit.assert" Version="$(xUnitVersion)" />
     <PackageReference Include="Xunit.SkippableFact" Version="$(XunitSkippableFactVersion)" />
   </ItemGroup>
 

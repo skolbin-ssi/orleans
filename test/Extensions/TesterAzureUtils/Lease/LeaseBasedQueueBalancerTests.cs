@@ -36,17 +36,17 @@ namespace Tester.AzureUtils.Lease
             builder.AddSiloBuilderConfigurator<SiloBuilderConfigurator>();
         }
 
-        public class SiloBuilderConfigurator : ISiloBuilderConfigurator
+        public class SiloBuilderConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder
                     .UseAzureBlobLeaseProvider(ob => ob.Configure<IOptions<ClusterOptions>>((options, cluster) =>
                     {
-                        options.DataConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                         options.BlobContainerName = "cluster-" + cluster.Value.ClusterId + "-leases";
                     }))
-                    .UseAzureStorageClustering(options => options.ConnectionString = TestDefaultConfiguration.DataConnectionString)
+                    .UseAzureStorageClustering(options => options.ConfigureTestDefaults())
                     .AddMemoryStreams<DefaultMemoryMessageBodySerializer>(StreamProviderName, b=>
                     {
                         b.ConfigurePartitioning(totalQueueCount);

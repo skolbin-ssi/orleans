@@ -1,9 +1,6 @@
 using System;
 using System.Threading.Tasks;
-using Microsoft.Azure.EventHubs;
 using Orleans.Runtime;
-using Microsoft.Extensions.Options;
-using Orleans.Storage;
 using Orleans.Streams;
 using Orleans.TestingHost;
 using ServiceBus.Tests.TestStreamProviders;
@@ -38,9 +35,9 @@ namespace ServiceBus.Tests.MonitorTests
             }
 
 
-            private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class MySiloBuilderConfigurator : ISiloConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder
                         .AddPersistentStreams(
@@ -55,7 +52,7 @@ namespace ServiceBus.Tests.MonitorTests
                     hostBuilder
                         .ConfigureServices(services =>
                         {
-                            services.AddTransientNamedService<Func<IStreamIdentity, IStreamDataGenerator<EventData>>>(StreamProviderName, (s, n) => SimpleStreamEventDataGenerator.CreateFactory(s));
+                            services.AddTransientNamedService(StreamProviderName, (s, n) => SimpleStreamEventDataGenerator.CreateFactory(s));
                         })
                         .AddMemoryGrainStorage("PubSubStore");
                 }
@@ -72,13 +69,13 @@ namespace ServiceBus.Tests.MonitorTests
             seed = new Random();
         }
 
-        [Fact, TestCategory("Functional")]
+        [Fact(Skip = "See https://github.com/dotnet/orleans/issues/4594"), TestCategory("Functional")]
         public async Task EHStatistics_MonitorCalledAccordingly()
         {
             var streamId = new FullStreamIdentity(Guid.NewGuid(), StreamNamespace, StreamProviderName);
             //set up 30 healthy consumer grain to show how much we favor slow consumer 
             int healthyConsumerCount = 30;
-            var healthyConsumers = await EHSlowConsumingTests.SetUpHealthyConsumerGrain(this.fixture.GrainFactory, streamId.Guid, StreamNamespace, StreamProviderName, healthyConsumerCount);
+            _ = await EHSlowConsumingTests.SetUpHealthyConsumerGrain(this.fixture.GrainFactory, streamId.Guid, StreamNamespace, StreamProviderName, healthyConsumerCount);
 
             //configure data generator for stream and start producing
             var mgmtGrain = this.fixture.GrainFactory.GetGrain<IManagementGrain>(0);

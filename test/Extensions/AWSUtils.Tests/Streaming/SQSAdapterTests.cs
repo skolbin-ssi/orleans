@@ -23,7 +23,7 @@ namespace AWSUtils.Tests.Streaming
 {
     [TestCategory("AWS"), TestCategory("SQS")]
     [Collection(TestEnvironmentFixture.DefaultCollection)]
-    public class SQSAdapterTests : IDisposable
+    public class SQSAdapterTests : IAsyncLifetime
     {
         private readonly ITestOutputHelper output;
         private readonly TestEnvironmentFixture fixture;
@@ -31,8 +31,6 @@ namespace AWSUtils.Tests.Streaming
         private const int NumMessagesPerBatch = 20;
         private readonly string clusterId;
         public static readonly string SQS_STREAM_PROVIDER_NAME = "SQSAdapterTests";
-
-        private static readonly SafeRandom Random = new SafeRandom();
 
         public SQSAdapterTests(ITestOutputHelper output, TestEnvironmentFixture fixture)
         {
@@ -46,9 +44,18 @@ namespace AWSUtils.Tests.Streaming
             this.clusterId = MakeClusterId();
         }
 
-        public void Dispose()
+        public Task InitializeAsync() => Task.CompletedTask;
+
+        public async Task DisposeAsync()
         {
-            SQSStreamProviderUtils.DeleteAllUsedQueues(SQS_STREAM_PROVIDER_NAME, this.clusterId, AWSTestConstants.DefaultSQSConnectionString, NullLoggerFactory.Instance).Wait();
+            if (!string.IsNullOrWhiteSpace(AWSTestConstants.DefaultSQSConnectionString))
+            {
+                await SQSStreamProviderUtils.DeleteAllUsedQueues(
+                    SQS_STREAM_PROVIDER_NAME,
+                    this.clusterId,
+                    AWSTestConstants.DefaultSQSConnectionString,
+                    NullLoggerFactory.Instance);
+            }
         }
 
         [SkippableFact]
@@ -80,7 +87,7 @@ namespace AWSUtils.Tests.Streaming
             Guid streamId2 = Guid.NewGuid();
 
             int receivedBatches = 0;
-            var streamsPerQueue = new ConcurrentDictionary<QueueId, HashSet<IStreamIdentity>>();
+            var streamsPerQueue = new ConcurrentDictionary<QueueId, HashSet<StreamId>>();
 
             // reader threads (at most 2 active queues because only two streams)
             var work = new List<Task>();
@@ -101,14 +108,14 @@ namespace AWSUtils.Tests.Streaming
                         foreach (var message in messages.Cast<SQSBatchContainer>())
                         {
                             streamsPerQueue.AddOrUpdate(queueId,
-                                id => new HashSet<IStreamIdentity> { new StreamIdentity(message.StreamGuid, message.StreamGuid.ToString()) },
+                                id => new HashSet<StreamId> { message.StreamId },
                                 (id, set) =>
                                 {
-                                    set.Add(new StreamIdentity(message.StreamGuid, message.StreamGuid.ToString()));
+                                    set.Add(message.StreamId);
                                     return set;
                                 });
                             output.WriteLine("Queue {0} received message on stream {1}", queueId,
-                                message.StreamGuid);
+                                message.StreamId);
                             Assert.Equal(NumMessagesPerBatch / 2, message.GetEvents<int>().Count());  // "Half the events were ints"
                             Assert.Equal(NumMessagesPerBatch / 2, message.GetEvents<string>().Count());  // "Half the events were strings"
                         }
@@ -125,7 +132,7 @@ namespace AWSUtils.Tests.Streaming
                 .Select(i => i % 2 == 0 ? streamId1 : streamId2)
                 .ToList()
                 .ForEach(streamId =>
-                    adapter.QueueMessageBatchAsync(streamId, streamId.ToString(),
+                    adapter.QueueMessageBatchAsync(StreamId.Create(streamId.ToString(), streamId),
                         events.Take(NumMessagesPerBatch).ToArray(), null, RequestContextExtensions.Export(this.fixture.SerializationManager)).Wait())));
             await Task.WhenAll(work);
 
@@ -134,12 +141,12 @@ namespace AWSUtils.Tests.Streaming
 
             // check to see if all the events are in the cache and we can enumerate through them
             StreamSequenceToken firstInCache = new EventSequenceTokenV2(0);
-            foreach (KeyValuePair<QueueId, HashSet<IStreamIdentity>> kvp in streamsPerQueue)
+            foreach (KeyValuePair<QueueId, HashSet<StreamId>> kvp in streamsPerQueue)
             {
                 var receiver = receivers[kvp.Key];
                 var qCache = caches[kvp.Key];
 
-                foreach (IStreamIdentity streamGuid in kvp.Value)
+                foreach (StreamId streamGuid in kvp.Value)
                 {
                     // read all messages in cache for stream
                     IQueueCacheCursor cursor = qCache.GetCacheCursor(streamGuid, firstInCache);
@@ -183,9 +190,9 @@ namespace AWSUtils.Tests.Streaming
             {
                 if (i % 2 == 0)
                 {
-                    return Random.Next(int.MaxValue) as object;
+                    return ThreadSafeRandom.Next(int.MaxValue) as object;
                 }
-                return Random.Next(int.MaxValue).ToString(CultureInfo.InvariantCulture);
+                return ThreadSafeRandom.Next(int.MaxValue).ToString(CultureInfo.InvariantCulture);
             }).ToList();
         }
 

@@ -2,16 +2,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Orleans.Configuration;
 using Orleans.Configuration.Validators;
-using Orleans.GrainDirectory;
 using Orleans.Runtime.Configuration;
 using Orleans.Runtime.ConsistentRing;
 using Orleans.Runtime.Counters;
 using Orleans.Runtime.GrainDirectory;
-using Orleans.Runtime.LogConsistency;
 using Orleans.Runtime.MembershipService;
 using Orleans.Metadata;
 using Orleans.Runtime.Messaging;
-using Orleans.Runtime.MultiClusterNetwork;
 using Orleans.Runtime.Placement;
 using Orleans.Runtime.Providers;
 using Orleans.Runtime.ReminderService;
@@ -21,8 +18,6 @@ using Orleans.Runtime.Versions.Compatibility;
 using Orleans.Runtime.Versions.Selector;
 using Orleans.Serialization;
 using Orleans.Statistics;
-using Orleans.Streams;
-using Orleans.Streams.Core;
 using Orleans.Timers;
 using Orleans.Versions;
 using Orleans.Versions.Compatibility;
@@ -30,7 +25,6 @@ using Orleans.Versions.Selector;
 using Orleans.Providers;
 using Orleans.Runtime;
 using Orleans.Transactions;
-using Orleans.LogConsistency;
 using Microsoft.Extensions.Logging;
 using Orleans.ApplicationParts;
 using Orleans.Runtime.Utilities;
@@ -42,12 +36,14 @@ using Orleans.Timers.Internal;
 using Microsoft.AspNetCore.Connections;
 using Orleans.Networking.Shared;
 using Orleans.Configuration.Internal;
+using Orleans.Runtime.Metadata;
+using Orleans.GrainReferences;
 
 namespace Orleans.Hosting
 {
     internal static class DefaultSiloServices
     {
-        internal static void AddDefaultServices(IApplicationPartManager applicationPartManager, IServiceCollection services)
+        internal static void AddDefaultServices(IServiceCollection services)
         {
             services.AddOptions();
 
@@ -59,7 +55,7 @@ namespace Orleans.Hosting
 
             // Register system services.
             services.TryAddSingleton<ILocalSiloDetails, LocalSiloDetails>();
-            services.TryAddSingleton<ISiloHost, SiloWrapper>();
+            services.TryAddSingleton<ISiloHost, SiloHost>();
             services.TryAddTransient<ILifecycleSubject, LifecycleSubject>();
             services.TryAddSingleton<SiloLifecycleSubject>();
             services.TryAddFromExisting<ISiloLifecycleSubject, SiloLifecycleSubject>();
@@ -94,51 +90,65 @@ namespace Orleans.Hosting
             services.TryAddSingleton<SerializationStatisticsGroup>();
             services.TryAddSingleton<OverloadDetector>();
 
-            services.TryAddSingleton<ExecutorService>();
-            // queue balancer contructing related
-            services.TryAddTransient<IStreamQueueBalancer, ConsistentRingQueueBalancer>();
-
             services.TryAddSingleton<FallbackSystemTarget>();
             services.TryAddSingleton<LifecycleSchedulingSystemTarget>();
 
             services.AddLogging();
             services.TryAddSingleton<ITimerRegistry, TimerRegistry>();
             services.TryAddSingleton<IReminderRegistry, ReminderRegistry>();
+            services.AddTransient<IConfigurationValidator, ReminderOptionsValidator>();
             services.TryAddSingleton<GrainRuntime>();
             services.TryAddSingleton<IGrainRuntime, GrainRuntime>();
             services.TryAddSingleton<IGrainCancellationTokenRuntime, GrainCancellationTokenRuntime>();
+            services.AddTransient<CancellationSourcesExtension>();
+            services.AddTransientKeyedService<Type, IGrainExtension>(typeof(ICancellationSourcesExtension), (sp, _) => sp.GetRequiredService<CancellationSourcesExtension>());
             services.TryAddSingleton<OrleansTaskScheduler>();
-            services.AddFromExisting<IHealthCheckParticipant, OrleansTaskScheduler>();
             services.TryAddSingleton<GrainFactory>(sp => sp.GetService<InsideRuntimeClient>().ConcreteGrainFactory);
+            services.TryAddSingleton<GrainInterfaceTypeToGrainTypeResolver>();
             services.TryAddFromExisting<IGrainFactory, GrainFactory>();
             services.TryAddFromExisting<IInternalGrainFactory, GrainFactory>();
-            services.TryAddFromExisting<IGrainReferenceConverter, GrainFactory>();
             services.TryAddSingleton<IGrainReferenceRuntime, GrainReferenceRuntime>();
-            services.TryAddSingleton<TypeMetadataCache>();
+            services.TryAddSingleton<GrainReferenceActivator>();
+            services.AddSingleton<IGrainReferenceActivatorProvider, ImrGrainReferenceActivatorProvider>();
+            services.AddSingleton<IGrainReferenceActivatorProvider, UntypedGrainReferenceActivatorProvider>();
+            services.AddSingleton<IConfigureGrainContextProvider, MayInterleaveConfiguratorProvider>();
+            services.AddSingleton<IConfigureGrainTypeComponents, ReentrantSharedComponentsConfigurator>();
+            services.TryAddSingleton<ImrRpcProvider>();
+            services.TryAddSingleton<ImrGrainMethodInvokerProvider>();
+            services.TryAddSingleton<GrainReferenceSerializer>();
+            services.TryAddSingleton<GrainReferenceKeyStringConverter>();
+            services.AddSingleton<GrainVersionManifest>();
+            services.TryAddSingleton<GrainBindingsResolver>();
+            services.TryAddSingleton<GrainTypeComponentsResolver>();
             services.TryAddSingleton<ActivationDirectory>();
-            services.TryAddSingleton<ActivationCollector>();
+            services.AddSingleton<ActivationCollector>();
+            services.AddFromExisting<IActivationCollector, ActivationCollector>();
+
+            // Directory
             services.TryAddSingleton<LocalGrainDirectory>();
             services.TryAddFromExisting<ILocalGrainDirectory, LocalGrainDirectory>();
-            services.TryAddSingleton(sp => sp.GetRequiredService<LocalGrainDirectory>().GsiActivationMaintainer);
-            services.TryAddSingleton<GrainTypeManager>();
+            services.AddSingleton<GrainLocator>();
+            services.AddSingleton<GrainLocatorResolver>();
+            services.AddSingleton<DhtGrainLocator>(sp => DhtGrainLocator.FromLocalGrainDirectory(sp.GetService<LocalGrainDirectory>()));
+            services.AddSingleton<GrainDirectoryResolver>();
+            services.AddSingleton<IGrainDirectoryResolver, GenericGrainDirectoryResolver>();
+            services.AddSingleton<CachedGrainLocator>();
+            services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, CachedGrainLocator>();
+            services.AddSingleton<ClientGrainLocator>();
+
             services.TryAddSingleton<MessageCenter>();
             services.TryAddFromExisting<IMessageCenter, MessageCenter>();
-            services.TryAddFromExisting<ISiloMessageCenter, MessageCenter>();
             services.TryAddSingleton(FactoryUtility.Create<MessageCenter, Gateway>);
-            services.AddSingleton<Gateway>(sp => sp.GetRequiredService<MessageCenter>().Gateway);
+            services.TryAddSingleton<IConnectedClientCollection>(sp => (IConnectedClientCollection)sp.GetRequiredService<MessageCenter>().Gateway ?? new EmptyConnectedClientCollection());
             services.TryAddSingleton<Dispatcher>(sp => sp.GetRequiredService<Catalog>().Dispatcher);
+            services.TryAddSingleton<ActivationMessageScheduler>(sp => sp.GetRequiredService<Catalog>().ActivationMessageScheduler);
             services.TryAddSingleton<InsideRuntimeClient>();
             services.TryAddFromExisting<IRuntimeClient, InsideRuntimeClient>();
-            services.TryAddFromExisting<ISiloRuntimeClient, InsideRuntimeClient>();
             services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, InsideRuntimeClient>();
             services.TryAddSingleton<IGrainServiceFactory, GrainServiceFactory>();
 
             services.TryAddSingleton<IFatalErrorHandler, FatalErrorHandler>();
 
-            services.TryAddSingleton<MultiClusterGossipChannelFactory>();
-            services.TryAddSingleton<MultiClusterOracle>();
-            services.TryAddSingleton<MultiClusterRegistrationStrategyManager>();
-            services.TryAddFromExisting<IMultiClusterOracle, MultiClusterOracle>();
             services.TryAddSingleton<DeploymentLoadPublisher>();
 
             services.TryAddSingleton<IAsyncTimerFactory, AsyncTimerFactory>();
@@ -154,6 +164,10 @@ namespace Orleans.Hosting
             services.AddSingleton<ClusterHealthMonitor>();
             services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, ClusterHealthMonitor>();
             services.AddFromExisting<IHealthCheckParticipant, ClusterHealthMonitor>();
+            services.AddSingleton<ProbeRequestMonitor>();
+            services.AddSingleton<LocalSiloHealthMonitor>();
+            services.AddFromExisting<ILocalSiloHealthMonitor, LocalSiloHealthMonitor>();
+            services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, LocalSiloHealthMonitor>();
             services.AddSingleton<MembershipAgent>();
             services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, MembershipAgent>();
             services.AddFromExisting<IHealthCheckParticipant, MembershipAgent>();
@@ -166,23 +180,23 @@ namespace Orleans.Hosting
             services.TryAddFromExisting<IClusterMembershipService, ClusterMembershipService>();
             services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, ClusterMembershipService>();
 
-            services.TryAddSingleton<ClientObserverRegistrar>();
+            services.TryAddSingleton<ClientDirectory>();
+            services.AddFromExisting<ILocalClientDirectory, ClientDirectory>();
+            services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, ClientDirectory>();
+            
             services.TryAddSingleton<SiloProviderRuntime>();
-            services.TryAddFromExisting<IStreamProviderRuntime, SiloProviderRuntime>();
             services.TryAddFromExisting<IProviderRuntime, SiloProviderRuntime>();
-            services.TryAddSingleton<ImplicitStreamSubscriberTable>();
+
             services.TryAddSingleton<MessageFactory>();
 
-            services.TryAddSingleton<IGrainRegistrar<GlobalSingleInstanceRegistration>, GlobalSingleInstanceRegistrar>();
-            services.TryAddSingleton<IGrainRegistrar<ClusterLocalRegistration>, ClusterLocalRegistrar>();
-            services.TryAddSingleton<RegistrarManager>();
-            services.TryAddSingleton<Factory<Grain, IMultiClusterRegistrationStrategy, ILogConsistencyProtocolServices>>(FactoryUtility.Create<Grain, IMultiClusterRegistrationStrategy, ProtocolServices>);
             services.TryAddSingleton(FactoryUtility.Create<GrainDirectoryPartition>);
 
             // Placement
             services.AddSingleton<IConfigurationValidator, ActivationCountBasedPlacementOptionsValidator>();
-            services.TryAddSingleton<PlacementDirectorsManager>();
-            services.TryAddSingleton<ClientObserversPlacementDirector>();
+            services.AddSingleton<PlacementService>();
+            services.AddSingleton<PlacementStrategyResolver>();
+            services.AddSingleton<PlacementDirectorResolver>();
+            services.AddSingleton<IPlacementStrategyResolver, ClientObserverPlacementStrategyResolver>();
 
             // Configure the default placement strategy.
             services.TryAddSingleton<PlacementStrategy, RandomPlacement>();
@@ -194,10 +208,7 @@ namespace Orleans.Hosting
             services.Replace(new ServiceDescriptor(typeof(StatelessWorkerPlacement), sp => new StatelessWorkerPlacement(), ServiceLifetime.Singleton));
             services.AddPlacementDirector<ActivationCountBasedPlacement, ActivationCountPlacementDirector>();
             services.AddPlacementDirector<HashBasedPlacement, HashBasedPlacementDirector>();
-
-            // Activation selectors
-            services.AddSingletonKeyedService<Type, IActivationSelector, RandomPlacementDirector>(typeof(RandomPlacement));
-            services.AddSingletonKeyedService<Type, IActivationSelector, StatelessWorkerDirector>(typeof(StatelessWorkerPlacement));
+            services.AddPlacementDirector<ClientObserversPlacement, ClientObserversPlacementDirector>();
 
             // Versioning
             services.TryAddSingleton<VersionSelectorManager>();
@@ -231,13 +242,17 @@ namespace Orleans.Hosting
             services.TryAddSingleton<Factory<IGrainRuntime>>(sp => () => sp.GetRequiredService<IGrainRuntime>());
 
             // Grain activation
+            services.TryAddSingleton<PlacementService>();
             services.TryAddSingleton<Catalog>();
-            services.TryAddSingleton<GrainCreator>();
-            services.TryAddSingleton<IGrainActivator, DefaultGrainActivator>();
-            services.TryAddScoped<ActivationData.GrainActivationContextFactory>();
-            services.TryAddScoped<IGrainActivationContext>(sp => sp.GetRequiredService<ActivationData.GrainActivationContextFactory>().Context);
+            services.AddFromExisting<IHealthCheckParticipant, Catalog>();
+            services.TryAddSingleton<GrainContextActivator>();
+            services.AddSingleton<IConfigureGrainTypeComponents, ConfigureDefaultGrainActivator>();
+            services.TryAddSingleton<GrainReferenceActivator>();
+            services.TryAddSingleton<IGrainContextActivatorProvider, ActivationDataActivatorProvider>();
+            services.TryAddSingleton<IGrainContextAccessor, GrainContextAccessor>();
+            services.AddSingleton<IncomingRequestMonitor>();
+            services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, IncomingRequestMonitor>();
 
-            services.TryAddSingleton<IStreamSubscriptionManagerAdmin>(sp => new StreamSubscriptionManagerAdmin(sp.GetRequiredService<IStreamProviderRuntime>()));
             services.TryAddSingleton<IConsistentRingProvider>(
                 sp =>
                 {
@@ -260,19 +275,20 @@ namespace Orleans.Hosting
                 sp.GetRequiredService<IOptions<SiloMessagingOptions>>().Value.LargeMessageWarningThreshold));
             services.TryAddSingleton<ITypeResolver, CachedTypeResolver>();
             services.TryAddSingleton<IFieldUtils, FieldUtils>();
-            services.AddSingleton<BinaryFormatterSerializer>();
-            services.AddSingleton<BinaryFormatterISerializableSerializer>();
-            services.AddFromExisting<IKeyedSerializer, BinaryFormatterISerializableSerializer>();
-#pragma warning disable CS0618 // Type or member is obsolete
+
+            // Register the ISerializable serializer first, so that it takes precedence
+            services.AddSingleton<DotNetSerializableSerializer>();
+            services.AddFromExisting<IKeyedSerializer, DotNetSerializableSerializer>();
+
+
             services.AddSingleton<ILBasedSerializer>();
             services.AddFromExisting<IKeyedSerializer, ILBasedSerializer>();
-#pragma warning restore CS0618 // Type or member is obsolete
 
             // Transactions
             services.TryAddSingleton<ITransactionAgent, DisabledTransactionAgent>();
 
             // Application Parts
-            services.TryAddSingleton<IApplicationPartManager>(applicationPartManager);
+            var applicationPartManager = services.GetApplicationPartManager();
             applicationPartManager.AddApplicationPart(new AssemblyPart(typeof(RuntimeVersion).Assembly) { IsFrameworkAssembly = true });
             applicationPartManager.AddApplicationPart(new AssemblyPart(typeof(Silo).Assembly) { IsFrameworkAssembly = true });
             applicationPartManager.AddFeatureProvider(new BuiltInTypesSerializationFeaturePopulator());
@@ -281,22 +297,38 @@ namespace Orleans.Hosting
             applicationPartManager.AddFeatureProvider(new AssemblyAttributeFeatureProvider<SerializerFeature>());
             services.AddTransient<IConfigurationValidator, ApplicationPartValidator>();
 
+            // Type metadata
+            services.AddSingleton<SiloManifestProvider>();
+            services.AddSingleton<GrainClassMap>(sp => sp.GetRequiredService<SiloManifestProvider>().GrainTypeMap);
+            services.AddSingleton<GrainTypeResolver>();
+            services.AddSingleton<IGrainTypeProvider, AttributeGrainTypeProvider>();
+            services.AddSingleton<IGrainTypeProvider, LegacyGrainTypeResolver>();
+            services.AddSingleton<GrainPropertiesResolver>();
+            services.AddSingleton<GrainInterfaceTypeResolver>();
+            services.AddSingleton<IGrainInterfacePropertiesProvider, AttributeGrainInterfacePropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, AttributeGrainPropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, AttributeGrainBindingsProvider>();
+            services.AddSingleton<IGrainInterfacePropertiesProvider, TypeNameGrainPropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, TypeNameGrainPropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, ImplementedInterfaceProvider>();
+            services.AddSingleton<ClusterManifestProvider>();
+            services.AddFromExisting<IClusterManifestProvider, ClusterManifestProvider>();
+            services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, ClusterManifestProvider>();
+            services.AddSingleton<TypeConverter>();
+
             //Add default option formatter if none is configured, for options which are required to be configured
             services.ConfigureFormatter<SiloOptions>();
-            services.ConfigureFormatter<ProcessExitHandlingOptions>();
             services.ConfigureFormatter<SchedulingOptions>();
             services.ConfigureFormatter<PerformanceTuningOptions>();
             services.ConfigureFormatter<SerializationProviderOptions>();
             services.ConfigureFormatter<ConnectionOptions>();
             services.ConfigureFormatter<SiloMessagingOptions>();
-            services.ConfigureFormatter<TypeManagementOptions>();
             services.ConfigureFormatter<ClusterMembershipOptions>();
             services.ConfigureFormatter<GrainDirectoryOptions>();
             services.ConfigureFormatter<ActivationCountBasedPlacementOptions>();
             services.ConfigureFormatter<GrainCollectionOptions>();
             services.ConfigureFormatter<GrainVersioningOptions>();
             services.ConfigureFormatter<ConsistentRingOptions>();
-            services.ConfigureFormatter<MultiClusterOptions>();
             services.ConfigureFormatter<StatisticsOptions>();
             services.ConfigureFormatter<TelemetryOptions>();
             services.ConfigureFormatter<LoadSheddingOptions>();
@@ -311,9 +343,7 @@ namespace Orleans.Hosting
 
             // Enable hosted client.
             services.TryAddSingleton<HostedClient>();
-            services.TryAddFromExisting<IHostedClient, HostedClient>();
             services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, HostedClient>();
-            services.TryAddSingleton<InvokableObjectManager>();
             services.TryAddSingleton<InternalClusterClient>();
             services.TryAddFromExisting<IInternalClusterClient, InternalClusterClient>();
             services.TryAddFromExisting<IClusterClient, InternalClusterClient>();
@@ -376,6 +406,12 @@ namespace Orleans.Hosting
             services.AddSingleton<ILifecycleParticipant<ISiloLifecycle>, GatewayConnectionListener>();
             services.AddSingleton<SocketSchedulers>();
             services.AddSingleton<SharedMemoryPool>();
+
+            // Logging helpers
+            services.AddSingleton<SiloLoggingHelper>();
+            services.AddFromExisting<ILifecycleParticipant<ISiloLifecycle>, SiloLoggingHelper>();
+            services.AddFromExisting<IGrainIdLoggingHelper, SiloLoggingHelper>();
+            services.AddFromExisting<IInvokeMethodRequestLoggingHelper, SiloLoggingHelper>();
         }
     }
 }

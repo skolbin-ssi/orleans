@@ -38,7 +38,7 @@ namespace UnitTests.StorageTests.Relational
         /// </summary>
         /// <remarks>This switch could take the key generator function as a parameter, so the called could use this same code to
         /// create known grain ID values.</remarks>
-        private static Dictionary<Type, Func<IInternalGrainFactory, Type, bool, object, GrainReference>> GrainReferenceTypeSwitch { get; } = new Dictionary<Type, Func<IInternalGrainFactory, Type, bool, object, GrainReference>>
+        private static Dictionary<Type, Func<IInternalGrainFactory, Type, bool, object, IAddressable>> GrainReferenceTypeSwitch { get; } = new Dictionary<Type, Func<IInternalGrainFactory, Type, bool, object, IAddressable>>
         {
             [typeof(Guid)] = (grainFactory, type, keyExtension, state) =>
             {
@@ -49,10 +49,10 @@ namespace UnitTests.StorageTests.Relational
                 Guid grainId = GetRandom<Guid>();
                 if(type != typeof(NotApplicable))
                 {
-                    return grainFactory.GetGrain(GrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)), type.FullName);
+                    return grainFactory.GetGrain(LegacyGrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)));
                 }
 
-                return grainFactory.GetGrain(GrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)));
+                return grainFactory.GetGrain(LegacyGrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)));
             },
             [typeof(long)] = (grainFactory, type, keyExtension, state) =>
             {
@@ -63,10 +63,10 @@ namespace UnitTests.StorageTests.Relational
                 long grainId = GetRandom<long>();
                 if(type != typeof(NotApplicable))
                 {
-                    return grainFactory.GetGrain(GrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)), type.FullName);
+                    return grainFactory.GetGrain(GrainId.Create("faketype", grainId.ToString()));
                 }
 
-                return grainFactory.GetGrain(GrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)));
+                return grainFactory.GetGrain(LegacyGrainId.GetGrainId(UniqueKey.NewKey(grainId, keyExtension ? UniqueKey.Category.KeyExtGrain : UniqueKey.Category.Grain, keyExtension ? KeyExtensionGrainTypeCode : NormalGrainTypeCode, extension)));
             },
             [typeof(string)] = (grainFactory, type, keyExtension, state) =>
             {
@@ -76,18 +76,12 @@ namespace UnitTests.StorageTests.Relational
                 var grainId = GetRandomCharacters(symbolSet, range);
                 if(type != typeof(NotApplicable))
                 {
-                    return grainFactory.GetGrain(GrainId.FromParsableString(GrainId.GetGrainId(NormalGrainTypeCode, grainId).ToParsableString()));
+                    return grainFactory.GetGrain(LegacyGrainId.FromParsableString(LegacyGrainId.GetGrainId(NormalGrainTypeCode, grainId).ToParsableString()));
                 }
 
-                return grainFactory.GetGrain(GrainId.FromParsableString(GrainId.GetGrainId(NormalGrainTypeCode, grainId).ToParsableString()), type.FullName);
+                return grainFactory.GetGrain(LegacyGrainId.GetGrainId(NormalGrainTypeCode, grainId).ToGrainId());
             }
         };
-
-                
-        /// <summary>
-        /// Pseudo-random number generator wrapped to protect from multi-threaded access.
-        /// </summary>
-        private static SafeRandom SafePseudoRandom { get; } = new SafeRandom();
 
         /// <summary>
         /// A list of random generators being used. This list is read-only after construction.
@@ -96,11 +90,11 @@ namespace UnitTests.StorageTests.Relational
         private static Dictionary<Type, object> RandomGenerators { get; } = new Dictionary<Type, object>
         {
             [typeof(Guid)] = new Func<object, Guid>(state => { return Guid.NewGuid(); }),
-            [typeof(int)] = new Func<object, int>(state => { return SafePseudoRandom.Next(); }),
+            [typeof(int)] = new Func<object, int>(state => { return ThreadSafeRandom.Next(); }),
             [typeof(long)] = new Func<object, long>(state =>
             {
                 var bufferInt64 = new byte[sizeof(long)];
-                SafePseudoRandom.NextBytes(bufferInt64);
+                ThreadSafeRandom.NextBytes(bufferInt64);
                 return BitConverter.ToInt64(bufferInt64, 0);
             }),
             [typeof(string)] = new Func<object, string>(symbolSet =>
@@ -110,8 +104,8 @@ namespace UnitTests.StorageTests.Relational
                 var builder = new StringBuilder();
                 for(long i = 0; i < count; ++i)
                 {
-                    var symbolRange = symbols.SetRanges[SafePseudoRandom.Next(symbols.SetRanges.Count)];
-                    builder.Append((char)SafePseudoRandom.Next(symbolRange.Start, symbolRange.End));
+                    var symbolRange = symbols.SetRanges[ThreadSafeRandom.Next(symbols.SetRanges.Count)];
+                    builder.Append((char)ThreadSafeRandom.Next(symbolRange.Start, symbolRange.End));
                 }
 
                 return builder.ToString();
@@ -196,7 +190,7 @@ namespace UnitTests.StorageTests.Relational
         /// <exception cref="ArgumentException"/>.
         internal static GrainReference GetRandomGrainReference<TGrainKey, TGrainGeneric>(IInternalGrainFactory grainFactory, bool keyExtension)
         {
-            Func<IInternalGrainFactory, Type, bool, object, GrainReference> func;
+            Func<IInternalGrainFactory, Type, bool, object, IAddressable> func;
             if(GrainReferenceTypeSwitch.TryGetValue(typeof(TGrainKey), out func))
             {
                 //If this a string type, some symbol set from which to draw the symbols needs to given
@@ -204,7 +198,7 @@ namespace UnitTests.StorageTests.Relational
                 const long SymbolsDefaultCount = 15;
                 var symbols = new SymbolSet(SymbolSet.Latin1);
 
-                return func(grainFactory, typeof(TGrainGeneric), keyExtension, Tuple.Create(new Range<long>(SymbolsDefaultCount, SymbolsDefaultCount), symbols));
+                return (GrainReference)func(grainFactory, typeof(TGrainGeneric), keyExtension, Tuple.Create(new Range<long>(SymbolsDefaultCount, SymbolsDefaultCount), symbols));
             }
 
             throw new ArgumentException(typeof(TGrainKey).Name);
@@ -229,10 +223,10 @@ namespace UnitTests.StorageTests.Relational
                 throw new ArgumentNullException(nameof(symbolSet));
             }
 
-            Func<IInternalGrainFactory, Type, bool, object, GrainReference> func;
+            Func<IInternalGrainFactory, Type, bool, object, IAddressable> func;
             if(GrainReferenceTypeSwitch.TryGetValue(typeof(TGrainKey), out func))
             {
-                return func(grainFactory, typeof(TGrainGeneric), keyExtension, Tuple.Create(new Range<long>(symbolCount, symbolCount), symbolSet));
+                return (GrainReference)func(grainFactory, typeof(TGrainGeneric), keyExtension, Tuple.Create(new Range<long>(symbolCount, symbolCount), symbolSet));
             }
 
             throw new ArgumentException(typeof(TGrainKey).Name);

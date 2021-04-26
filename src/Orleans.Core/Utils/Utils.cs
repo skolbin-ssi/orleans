@@ -1,10 +1,13 @@
-using Microsoft.Extensions.Logging;
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace Orleans.Runtime
 {
@@ -113,15 +116,9 @@ namespace Orleans.Runtime
             return String.Format("{0}h:{1}m:{2}s.{3}ms", timeSpan.Hours, timeSpan.Minutes, timeSpan.Seconds, timeSpan.Milliseconds);
         }
 
-        public static long TicksToMilliSeconds(long ticks)
-        {
-            return (long)TimeSpan.FromTicks(ticks).TotalMilliseconds;
-        }
+        public static long TicksToMilliSeconds(long ticks) => ticks / TimeSpan.TicksPerMillisecond;
 
-        public static float AverageTicksToMilliSeconds(float ticks)
-        {
-            return (float)TimeSpan.FromTicks((long)ticks).TotalMilliseconds;
-        }
+        public static float AverageTicksToMilliSeconds(float ticks) => ticks / TimeSpan.TicksPerMillisecond;
 
         /// <summary>
         /// Parse a Uri as an IPEndpoint.
@@ -134,21 +131,6 @@ namespace Orleans.Runtime
             {
                 case "gwy.tcp":
                     return new System.Net.IPEndPoint(System.Net.IPAddress.Parse(uri.Host), uri.Port);
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Parse a Uri as a Silo address, including the IPEndpoint and generation identifier.
-        /// </summary>
-        /// <param name="uri">The input Uri</param>
-        /// <returns></returns>
-        public static SiloAddress ToSiloAddress(this Uri uri)
-        {
-            switch (uri.Scheme)
-            {
-                case "gwy.tcp":
-                    return SiloAddress.New(uri.ToIPEndPoint(), uri.Segments.Length > 1 ? int.Parse(uri.Segments[1]) : 0);
             }
             return null;
         }
@@ -173,24 +155,15 @@ namespace Orleans.Runtime
         /// </summary>
         /// <param name="ep">The input IP end point</param>
         /// <returns></returns>
-        public static Uri ToGatewayUri(this System.Net.IPEndPoint ep)
-        {
-            var builder = new UriBuilder("gwy.tcp", ep.Address.ToString(), ep.Port, "0");
-            return builder.Uri;
-        }
+        public static Uri ToGatewayUri(this System.Net.IPEndPoint ep) => new Uri("gwy.tcp://" + ep.ToString() + "/0");
 
         /// <summary>
         /// Represent a silo address in the gateway URI format.
         /// </summary>
         /// <param name="address">The input silo address</param>
         /// <returns></returns>
-        public static Uri ToGatewayUri(this SiloAddress address)
-        {
-            var builder = new UriBuilder("gwy.tcp", address.Endpoint.Address.ToString(), address.Endpoint.Port, address.Generation.ToString());
-            return builder.Uri;
-        }
+        public static Uri ToGatewayUri(this SiloAddress address) => new Uri("gwy.tcp://" + address.Endpoint.ToString() + "/" + address.Generation.ToString());
 
-        
         /// <summary>
         /// Calculates an integer hash value based on the consistent identity hash of a string.
         /// </summary>
@@ -198,23 +171,16 @@ namespace Orleans.Runtime
         /// <returns>An integer hash for the string.</returns>
         public static int CalculateIdHash(string text)
         {
-            SHA256 sha = SHA256.Create(); // This is one implementation of the abstract class SHA1.
-            int hash = 0;
-            try
-            {
-                byte[] data = Encoding.Unicode.GetBytes(text);
-                byte[] result = sha.ComputeHash(data);
-                for (int i = 0; i < result.Length; i += 4)
-                {
-                    int tmp = (result[i] << 24) | (result[i + 1] << 16) | (result[i + 2] << 8) | (result[i + 3]);
-                    hash = hash ^ tmp;
-                }
-            }
-            finally
-            {
-                sha.Dispose();
-            }
-            return hash;
+            var input = BitConverter.IsLittleEndian ? MemoryMarshal.AsBytes(text.AsSpan()) : Encoding.Unicode.GetBytes(text);
+
+            Span<int> result = stackalloc int[256 / 8 / sizeof(int)];
+            var sha = SHA256.Create();
+            sha.TryComputeHash(input, MemoryMarshal.AsBytes(result), out _);
+            sha.Dispose();
+
+            var hash = 0;
+            for (var i = 0; i < result.Length; i++) hash ^= result[i];
+            return BitConverter.IsLittleEndian ? BinaryPrimitives.ReverseEndianness(hash) : hash;
         }
 
         /// <summary>
@@ -224,66 +190,28 @@ namespace Orleans.Runtime
         /// <returns>An integer hash for the string.</returns>
         internal static Guid CalculateGuidHash(string text)
         {
-            SHA256 sha = SHA256.Create(); // This is one implementation of the abstract class SHA1.
-            byte[] hash = new byte[16];
-            try
-            {
-                byte[] data = Encoding.Unicode.GetBytes(text);
-                byte[] result = sha.ComputeHash(data);
-                for (int i = 0; i < result.Length; i ++)
-                {
-                    byte tmp =  (byte)(hash[i % 16] ^ result[i]);
-                    hash[i%16] = tmp;
-                }
-            }
-            finally
-            {
-                sha.Dispose();
-            }
-            return new Guid(hash);
-        }
+            var input = BitConverter.IsLittleEndian ? MemoryMarshal.AsBytes(text.AsSpan()) : Encoding.Unicode.GetBytes(text);
 
-        public static bool TryFindException(Exception original, Type targetType, out Exception target)
-        {
-            if (original.GetType() == targetType)
-            {
-                target = original;
-                return true;
-            }
-            else if (original is AggregateException)
-            {
-                var baseEx = original.GetBaseException();
-                if (baseEx.GetType() == targetType)
-                {
-                    target = baseEx;
-                    return true;
-                }
-                else
-                {
-                    var newEx = ((AggregateException)original).Flatten();
-                    foreach (var exc in newEx.InnerExceptions)
-                    {
-                        if (exc.GetType() == targetType)
-                        {
-                            target = newEx;
-                            return true;
-                        }
-                    }
-                }
-            }
-            target = null;
-            return false;
+            Span<byte> result = stackalloc byte[256 / 8];
+            var sha = SHA256.Create();
+            sha.TryComputeHash(input, result, out _);
+            sha.Dispose();
+
+            MemoryMarshal.AsRef<long>(result) ^= MemoryMarshal.Read<long>(result.Slice(16));
+            MemoryMarshal.AsRef<long>(result.Slice(8)) ^= MemoryMarshal.Read<long>(result.Slice(24));
+            return BitConverter.IsLittleEndian ? MemoryMarshal.Read<Guid>(result) : new Guid(result.Slice(0, 16));
         }
 
         public static void SafeExecute(Action action, ILogger logger = null, string caller = null)
         {
-            SafeExecute(action, logger, caller==null ? (Func<string>)null : () => caller);
+            SafeExecute(action, logger, (object)caller);
         }
 
         // a function to safely execute an action without any exception being thrown.
         // callerGetter function is called only in faulty case (now string is generated in the success case).
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1031:DoNotCatchGeneralExceptionTypes")]
-        public static void SafeExecute(Action action, ILogger logger, Func<string> callerGetter)
+        public static void SafeExecute(Action action, ILogger logger, Func<string> callerGetter) => SafeExecute(action, logger, (object)callerGetter);
+
+        private static void SafeExecute(Action action, ILogger logger, object callerGetter)
         {
             try
             {
@@ -291,28 +219,38 @@ namespace Orleans.Runtime
             }
             catch (Exception exc)
             {
-                try
+                if (logger != null)
                 {
-                    if (logger != null)
+                    try
                     {
                         string caller = null;
-                        if (callerGetter != null)
+                        switch (callerGetter)
                         {
-                            try
-                            {
-                                caller = callerGetter();
-                            }catch (Exception) { }
+                            case string value:
+                                caller = value;
+                                break;
+                            case Func<string> func:
+                                try
+                                {
+                                    caller = func();
+                                }
+                                catch
+                                {
+                                }
+
+                                break;
                         }
+
                         foreach (var e in exc.FlattenAggregate())
                         {
                             logger.Warn(ErrorCode.Runtime_Error_100325,
                                 $"Ignoring {e.GetType().FullName} exception thrown from an action called by {caller ?? String.Empty}.", exc);
                         }
                     }
-                }
-                catch (Exception)
-                {
-                    // now really, really ignore.
+                    catch
+                    {
+                        // now really, really ignore.
+                    }
                 }
             }
         }
@@ -330,15 +268,6 @@ namespace Orleans.Runtime
             else
                 result.Add(exc);
             return result;
-        }
-
-        public static AggregateException Flatten(this ReflectionTypeLoadException rtle)
-        {
-            // if ReflectionTypeLoadException is thrown, we need to provide the
-            // LoaderExceptions property in order to make it meaningful.
-            var all = new List<Exception> { rtle };
-            all.AddRange(rtle.LoaderExceptions);
-            throw new AggregateException("A ReflectionTypeLoadException has been thrown. The original exception and the contents of the LoaderExceptions property have been aggregated for your convenience.", all);
         }
 
         /// <summary>
@@ -366,22 +295,7 @@ namespace Orleans.Runtime
         public static string GetStackTrace(int skipFrames = 0)
         {
             skipFrames += 1; //skip this method from the stack trace
-#if NETSTANDARD
-            skipFrames += 2; //skip the 2 Environment.StackTrace related methods.
-            var stackTrace = Environment.StackTrace;
-            for (int i = 0; i < skipFrames; i++)
-            {
-                stackTrace = stackTrace.Substring(stackTrace.IndexOf(Environment.NewLine) + Environment.NewLine.Length);
-            }
-            return stackTrace;
-#else
             return new System.Diagnostics.StackTrace(skipFrames).ToString();
-#endif
-        }
-
-        public static GrainReference FromKeyString(string key, IGrainReferenceRuntime runtime)
-        {
-            return GrainReference.FromKeyString(key, runtime);
         }
     }
 }

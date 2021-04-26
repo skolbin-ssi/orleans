@@ -20,6 +20,13 @@ using Orleans.CodeGenerator.Model;
 using System.Text;
 using Orleans.Serialization;
 
+[assembly: System.Reflection.AssemblyCompanyAttribute("Microsoft")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("2.0.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("2.0.0")]
+[assembly: System.Reflection.AssemblyProductAttribute("Microsoft Orleans")]
+[assembly: System.Reflection.AssemblyTitleAttribute("CodeGenerator.Tests")]
+[assembly: System.Reflection.AssemblyVersionAttribute("2.0.0.0")]
+
 namespace CodeGenerator.Tests
 {
     /// <summary>
@@ -53,13 +60,17 @@ namespace CodeGenerator.Tests
 
         private static readonly Type[] Grains =
         {
+            typeof(IMyGenericGrainInterface3<,>),
+            typeof(IMyGenericGrainInterface3<int,int>),
             typeof(IMyGenericGrainInterface2<>),
             typeof(IMyGenericGrainInterface2<int>),
             typeof(IMyGrainInterface),
+            typeof(IMyGrainInterfaceWithNamedTuple),
             typeof(IMyGenericGrainInterface<int>),
             typeof(IMyGrainInterfaceWithTypeCodeOverride),
             typeof(MyGrainClass),
             typeof(MyGenericGrainClass<int>),
+            typeof(MyGenericGrainClass<>),
             typeof(MyGrainClassWithTypeCodeOverride),
             typeof(NotNested.IMyGrainInterface),
             typeof(NotNested.IMyGenericGrainInterface<int>),
@@ -103,7 +114,8 @@ namespace CodeGenerator.Tests
                     MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "mscorlib.dll")),
                     MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.dll")),
                     MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Core.dll")),
-                    MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
+                    MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")),
+                    MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.Serialization.Formatters.dll"))
                 };
             }
         }
@@ -152,7 +164,7 @@ namespace CodeGenerator.Tests
         [Fact]
         public void TypeCodesMatch()
         {
-            var wellKnownTypes = WellKnownTypes.FromCompilation(this.compilation);
+            var wellKnownTypes = new WellKnownTypes(this.compilation);
             foreach (var (type, symbol) in GetTypeSymbolPairs(nameof(Grains)))
             {
                 this.output.WriteLine($"Type: {RuntimeTypeNameFormatter.Format(type)}");
@@ -168,7 +180,7 @@ namespace CodeGenerator.Tests
                     var expected = TypeUtils.GetTemplatedName(
                         TypeUtils.GetFullName(type),
                         type,
-                        type.GetGenericArguments(),
+                        type.GetGenericArgumentsSafe(),
                         t => false);
                     var named = Assert.IsAssignableFrom<INamedTypeSymbol>(symbol);
                     var actual = OrleansLegacyCompat.FormatTypeForIdComputation(named);
@@ -191,7 +203,7 @@ namespace CodeGenerator.Tests
         [Fact]
         public void MethodIdsMatch()
         {
-            var wellKnownTypes = WellKnownTypes.FromCompilation(this.compilation);
+            var wellKnownTypes = new WellKnownTypes(this.compilation);
             foreach (var (type, typeSymbol) in GetTypeSymbolPairs(nameof(Grains)))
             {
                 this.output.WriteLine($"Type: {RuntimeTypeNameFormatter.Format(type)}");
@@ -263,6 +275,16 @@ namespace CodeGenerator.Tests
             public Task<int> Two() => throw new NotImplementedException();
         }
 
+        public interface IMyGrainInterfaceWithNamedTuple : IGrainWithGuidKey
+        {
+            Task<string> SomeMethod(IEnumerable<(string name, object obj)> list);
+        }
+
+        public class MyGrainInterfaceWithNamedTuple : Grain, IMyGrainInterfaceWithNamedTuple
+        {
+            public Task<string> SomeMethod(IEnumerable<(string name, object obj)> list) => throw new NotImplementedException();
+        }
+
         public interface IMyGenericGrainInterface<T> : IGrainWithGuidKey
         {
             Task One(T a, int b, int c);
@@ -274,10 +296,15 @@ namespace CodeGenerator.Tests
             Task One(T a, int b, int c);
         }
 
-        public class MyGenericGrainClass<T> : Grain, IMyGenericGrainInterface<T>
+        public interface IMyGenericGrainInterface3<TOne, TTwo> : IGrainWithGuidKey
         {
-            public Task One(T a, int b, int c) => throw new NotImplementedException();
-            public Task<T> Two() => throw new NotImplementedException();
+            Task One(TOne a, TTwo b, int c);
+        }
+
+        public class MyGenericGrainClass<TOne> : Grain, IMyGenericGrainInterface<TOne>
+        {
+            public Task One(TOne a, int b, int c) => throw new NotImplementedException();
+            public Task<TOne> Two() => throw new NotImplementedException();
         }
 
         [TypeCodeOverride(1)]
@@ -318,15 +345,15 @@ namespace CodeGenerator.Tests
         public interface IMyGenericGrainInterface<T> : IGrainWithGuidKey
         {
             Task One(T a, int b, int c);
-            Task<T> Two();
-            Task<TU> Three<TU>();
+            Task<T> Two(T val);
+            Task<TU> Three<TU>(TU val);
         }
 
         public class MyGenericGrainClass<T> : Grain, IMyGenericGrainInterface<T>
         {
             public Task One(T a, int b, int c) => throw new NotImplementedException();
-            public Task<T> Two() => throw new NotImplementedException();
-            public Task<TU> Three<TU>() => throw new NotImplementedException();
+            public Task<T> Two(T val) => throw new NotImplementedException();
+            public Task<TU> Three<TU>(TU val) => throw new NotImplementedException();
         }
     }
 }

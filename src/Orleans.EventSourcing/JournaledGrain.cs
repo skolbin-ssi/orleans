@@ -1,11 +1,6 @@
-using Orleans.Concurrency;
-using Orleans.MultiCluster;
-using Orleans.LogConsistency;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Orleans.Core;
-using Orleans.Runtime;
 using Orleans.Storage;
 
 namespace Orleans.EventSourcing
@@ -19,15 +14,6 @@ namespace Orleans.EventSourcing
         where TGrainState : class, new()
     {
         protected JournaledGrain() { }
-
-        /// <summary>
-        /// This constructor is particularly useful for unit testing where test code can create a Grain and replace
-        /// the IGrainIdentity, IGrainRuntime and State with test doubles (mocks/stubs).
-        /// </summary>
-        protected JournaledGrain(IGrainIdentity identity, IGrainRuntime runtime)
-            : base(identity, runtime)
-        {
-        }
     }
 
 
@@ -45,15 +31,6 @@ namespace Orleans.EventSourcing
         where TEventBase: class
     {
         protected JournaledGrain() { }
-
-        /// <summary>
-        /// This constructor is particularly useful for unit testing where test code can create a Grain and replace
-        /// the IGrainIdentity, IGrainRuntime and State with test doubles (mocks/stubs).
-        /// </summary>
-        protected JournaledGrain(IGrainIdentity identity, IGrainRuntime runtime)
-            : base(identity, runtime)
-        {
-        }
 
         /// <summary>
         /// Raise an event.
@@ -235,16 +212,6 @@ namespace Orleans.EventSourcing
         {
         }
 
-
-        /// <inheritdoc />
-        protected IEnumerable<ConnectionIssue> UnresolvedConnectionIssues
-        {
-            get
-            {
-                return LogViewAdaptor.UnresolvedConnectionIssues;
-            }
-        }
-
         /// <inheritdoc />
         protected void EnableStatsCollection()
         {
@@ -340,24 +307,6 @@ namespace Orleans.EventSourcing
         Task ILogConsistencyProtocolParticipant.DeactivateProtocolParticipant()
         {
             return LogViewAdaptor.PostOnDeactivate();
-        }
-
-        /// <summary>
-        /// Receive a protocol message from other clusters, passed on to log view adaptor.
-        /// </summary>
-        [AlwaysInterleave]
-        Task<ILogConsistencyProtocolMessage> ILogConsistencyProtocolParticipant.OnProtocolMessageReceived(ILogConsistencyProtocolMessage payload)
-        {
-            return LogViewAdaptor.OnProtocolMessageReceived(payload);
-        }
-
-        /// <summary>
-        /// Receive a configuration change, pass on to log view adaptor.
-        /// </summary>
-        [AlwaysInterleave]
-        Task ILogConsistencyProtocolParticipant.OnMultiClusterConfigurationChange(MultiCluster.MultiClusterConfiguration next)
-        {
-            return LogViewAdaptor.OnMultiClusterConfigurationChange(next);
         }
 
         /// <summary>

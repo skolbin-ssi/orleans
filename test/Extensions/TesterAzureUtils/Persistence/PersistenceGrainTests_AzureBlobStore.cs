@@ -26,29 +26,29 @@ namespace Tester.AzureUtils.Persistence
     {
         public class Fixture : BaseAzureTestClusterFixture
         {
-            private class StorageSiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class StorageSiloBuilderConfigurator : ISiloConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder.AddAzureBlobGrainStorage("AzureStore", (AzureBlobStorageOptions options) =>
                     {
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                     })
                     .AddAzureBlobGrainStorage("AzureStore1", (AzureBlobStorageOptions options) =>
                     {
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                     })
                     .AddAzureBlobGrainStorage("AzureStore2", (AzureBlobStorageOptions options) =>
                     {
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                     })
                     .AddAzureBlobGrainStorage("AzureStore3", (AzureBlobStorageOptions options) =>
                     {
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                     })
                     .AddAzureBlobGrainStorage("GrainStorageForTest", (AzureBlobStorageOptions options) =>
                     {
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                     })
                     .AddMemoryGrainStorage("MemoryStore");
                 }

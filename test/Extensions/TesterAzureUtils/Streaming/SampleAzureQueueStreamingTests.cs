@@ -25,28 +25,29 @@ namespace Tester.AzureUtils.Streaming
             builder.AddSiloBuilderConfigurator<MySiloBuilderConfigurator>();
         }
 
-        private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+        private class MySiloBuilderConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder
                     .AddAzureQueueStreams(StreamProvider, ob=>ob.Configure<IOptions<ClusterOptions>>(
                         (options, dep) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                             options.QueueNames = AzureQueueUtilities.GenerateQueueNames(dep.Value.ClusterId, queueCount);
                         }))
                     .AddMemoryGrainStorage("PubSubStore");
             }
         }
 
-        public override void Dispose()
+        public override async Task DisposeAsync()
         {
-            if (this.HostedCluster != null)
+            await base.DisposeAsync();
+            if (!string.IsNullOrWhiteSpace(TestDefaultConfiguration.DataConnectionString))
             {
-                AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
+                await AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
                     AzureQueueUtilities.GenerateQueueNames(this.HostedCluster.Options.ClusterId, queueCount),
-                    TestDefaultConfiguration.DataConnectionString).Wait();
+                    new AzureQueueOptions().ConfigureTestDefaults());
             }
         }
 

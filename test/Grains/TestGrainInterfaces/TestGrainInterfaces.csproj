@@ -1,21 +1,16 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>UnitTests.GrainInterfaces</RootNamespace>
-    <AssemblyName>TestGrainInterfaces</AssemblyName>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
     <OrleansBuildTimeCodeGen>true</OrleansBuildTimeCodeGen>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="$(SourceRoot)src\Orleans.Streaming\Orleans.Streaming.csproj" />
     <ProjectReference Include="$(SourceRoot)test\Misc\TestInterfaces\TestInterfaces.csproj" />
-    <ProjectReference Include="$(SourceRoot)test\Misc\TestFSharpInterfaces\TestFSharpInterfaces.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Threading.Tasks.Extensions" Version="$(SystemThreadingTasksExtensionsVersion)" />
-    <PackageReference Include="FSharp.Core" Version="$(FSharpCoreVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="$(MicrosoftExtensionsLoggingVersion)" />
-    <PackageReference Include="Newtonsoft.Json" Version="$(NewtonsoftJsonVersion)" />
     <PackageReference Include="protobuf-net" Version="$(ProtobufNetVersion)" />
   </ItemGroup>
 </Project>

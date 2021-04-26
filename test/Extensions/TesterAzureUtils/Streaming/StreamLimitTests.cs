@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Orleans.Configuration;
@@ -12,7 +14,9 @@ using Orleans.Runtime;
 using Orleans.Streams;
 using Orleans.TestingHost;
 using Tester;
+using Tester.AzureUtils;
 using Tester.AzureUtils.Streaming;
+using Tester.AzureUtils.Utilities;
 using TestExtensions;
 using UnitTests.GrainInterfaces;
 using UnitTests.Grains;
@@ -39,65 +43,72 @@ namespace UnitTests.StreamingTests
         private string StreamNamespace;
         private readonly ITestOutputHelper output;
         private const int queueCount = 8;
-        protected override void ConfigureTestCluster(TestClusterBuilder builder)
+        protected override void ConfigureTestCluster(Orleans.TestingHost.TestClusterBuilder builder)
         {
             TestUtils.CheckForAzureStorage();
-            builder.AddSiloBuilderConfigurator<SiloBuilderConfigurator>();
+            builder.AddSiloBuilderConfigurator<TestClusterBuilder>();
+            builder.AddClientBuilderConfigurator<TestClusterBuilder>();
         }
 
-        private class SiloBuilderConfigurator : ISiloBuilderConfigurator
+        private class TestClusterBuilder : ISiloConfigurator, IClientBuilderConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder
                     .AddSimpleMessageStreamProvider(SmsStreamProviderName)
                     .AddSimpleMessageStreamProvider("SMSProviderDoNotOptimizeForImmutableData", options => options.OptimizeForImmutableData = false)
                     .AddAzureTableGrainStorage("AzureStore", builder => builder.Configure<IOptions<ClusterOptions>>((options, silo) =>
                     {
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                         options.DeleteStateOnClear = true;
                     }))
                     .AddAzureTableGrainStorage("PubSubStore", builder => builder.Configure<IOptions<ClusterOptions>>((options, silo) =>
                     {
                         options.DeleteStateOnClear = true;
-                        options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                        options.ConfigureTestDefaults();
                     }))
                     .AddAzureQueueStreams(AzureQueueStreamProviderName, ob => ob.Configure<IOptions<ClusterOptions>>(
                         (options, dep) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                             options.QueueNames = AzureQueueUtilities.GenerateQueueNames(dep.Value.ClusterId, queueCount);
                         }))
                     .AddAzureQueueStreams("AzureQueueProvider2", ob=>ob.Configure<IOptions<ClusterOptions>>(
                         (options, dep) =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                            options.ConfigureTestDefaults();
                             options.QueueNames = AzureQueueUtilities.GenerateQueueNames($"{dep.Value.ClusterId}2", queueCount);
                         }))
                     .AddMemoryGrainStorage("MemoryStore", options => options.NumStorageGrains = 1);
             }
+
+            public void Configure(IConfiguration configuration, Orleans.IClientBuilder clientBuilder) => clientBuilder.AddStreaming();
         }
 
         public StreamLimitTests(ITestOutputHelper output)
         {
             this.output = output;
             StreamNamespace = StreamTestsConstants.StreamLifecycleTestsNamespace;
+        }
+
+        public override async Task InitializeAsync()
+        {
+            await base.InitializeAsync();
             this.mgmtGrain = this.GrainFactory.GetGrain<IManagementGrain>(0);
         }
 
-        public override void Dispose()
+        public override async Task DisposeAsync()
         {
-            if (this.HostedCluster != null)
+            await base.DisposeAsync();
+            if (!string.IsNullOrWhiteSpace(TestDefaultConfiguration.DataConnectionString))
             {
-                AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
+                await AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
                     AzureQueueUtilities.GenerateQueueNames(this.HostedCluster.Options.ClusterId, queueCount),
-                    TestDefaultConfiguration.DataConnectionString).Wait();
-                AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
+                    new AzureQueueOptions().ConfigureTestDefaults());
+                await AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
                     AzureQueueUtilities.GenerateQueueNames($"{this.HostedCluster.Options.ClusterId}2", queueCount),
-                    TestDefaultConfiguration.DataConnectionString).Wait();
+                    new AzureQueueOptions().ConfigureTestDefaults());
             }
-
-            base.Dispose();
         }
         [SkippableFact]
         public async Task SMS_Limits_FindMax_Consumers()
@@ -376,10 +387,10 @@ namespace UnitTests.StreamingTests
             AsyncPipeline pipeline = new AsyncPipeline(pipelineSize);
 
             // Create streamId Guids
-            Guid[] streamIds = new Guid[numStreams];
+            StreamId[] streamIds = new StreamId[numStreams];
             for (int i = 0; i < numStreams; i++)
             {
-                streamIds[i] = Guid.NewGuid();
+                streamIds[i] = StreamId.Create(this.StreamNamespace, Guid.NewGuid());
             }
 
             int activeConsumerGrains = ActiveGrainCount(typeof(StreamLifecycleConsumerGrain).FullName);
@@ -425,11 +436,11 @@ namespace UnitTests.StreamingTests
                 // Producers
                 for (int i = 0; i < numStreams; i++)
                 {
-                    Guid streamId = streamIds[i];
+                    StreamId streamId = streamIds[i];
                     Guid producerId = producerIds[i % numProducers];
                     var grain = this.GrainFactory.GetGrain<IStreamLifecycleProducerGrain>(producerId);
 
-                    Task promise = grain.BecomeProducer(streamId, this.StreamNamespace, streamProviderName);
+                    Task promise = grain.BecomeProducer(streamId, streamProviderName);
 
                     promises.Add(promise);
                     pipeline.Add(promise);
@@ -441,7 +452,7 @@ namespace UnitTests.StreamingTests
             // Consumers
             for (int i = 0; i < numStreams; i++)
             {
-                Guid streamId = streamIds[i];
+                StreamId streamId = streamIds[i];
 
                 Task promise = SetupOneStream(streamId, streamProviderName, pipeline, numConsumers, 0, normalSubscribeCalls);
                 promises.Add(promise);
@@ -484,10 +495,10 @@ namespace UnitTests.StreamingTests
             var promises = new List<Task>();
 
             // Create streamId Guids
-            Guid[] streamIds = new Guid[numStreams];
+            StreamId[] streamIds = new StreamId[numStreams];
             for (int i = 0; i < numStreams; i++)
             {
-                streamIds[i] = Guid.NewGuid();
+                streamIds[i] = StreamId.Create(this.StreamNamespace, Guid.NewGuid());
             }
 
             if (warmUpPubSub)
@@ -554,16 +565,16 @@ namespace UnitTests.StreamingTests
         //    Assert.NotEqual(0.0, rps, "RPS greater than zero");
         //}
 
-        private void WarmUpPubSub(string streamProviderName, Guid[] streamIds, AsyncPipeline pipeline)
+        private void WarmUpPubSub(string streamProviderName, StreamId[] streamIds, AsyncPipeline pipeline)
         {
             int numStreams = streamIds.Length;
             // Warm up PubSub for the appropriate streams
             for (int i = 0; i < numStreams; i++)
             {
-                Guid streamId = streamIds[i];
-                string extKey = streamProviderName + "_" + this.StreamNamespace;
+                var streamId = new InternalStreamId(streamProviderName, streamIds[i]);
+                _ = streamProviderName + "_" + this.StreamNamespace;
 
-                IPubSubRendezvousGrain pubsub = this.GrainFactory.GetGrain<IPubSubRendezvousGrain>(streamId, extKey, null);
+                IPubSubRendezvousGrain pubsub = this.GrainFactory.GetGrain<IPubSubRendezvousGrain>(streamId.ToString());
 
                 Task promise = pubsub.Validate();
 
@@ -576,7 +587,8 @@ namespace UnitTests.StreamingTests
         private SimpleGrainStatistic[] grainCounts;
 
         private Task SetupOneStream(
-            Guid streamId, string streamProviderName,
+            StreamId streamId,
+            string streamProviderName,
             AsyncPipeline pipeline,
             int numConsumers,
             int numProducers,
@@ -610,7 +622,7 @@ namespace UnitTests.StreamingTests
             return Task.WhenAll(promises);
         }
 
-        private IList<Task> SetupProducers(Guid streamId, string streamNamespace, string streamProviderName, AsyncPipeline pipeline, int numProducers)
+        private IList<Task> SetupProducers(StreamId streamId, string streamNamespace, string streamProviderName, AsyncPipeline pipeline, int numProducers)
         {
             var producers = new List<IStreamLifecycleProducerGrain>();
             var promises = new List<Task>();
@@ -620,7 +632,7 @@ namespace UnitTests.StreamingTests
                 var grain = this.GrainFactory.GetGrain<IStreamLifecycleProducerGrain>(Guid.NewGuid());
                 producers.Add(grain);
 
-                Task promise = grain.BecomeProducer(streamId, streamNamespace, streamProviderName);
+                Task promise = grain.BecomeProducer(streamId, streamProviderName);
 
                 if (loopCount == 0)
                 {
@@ -634,12 +646,11 @@ namespace UnitTests.StreamingTests
             return promises;
         }
 
-        private IList<Task> SetupConsumers(Guid streamId, string streamNamespace, string streamProviderName, AsyncPipeline pipeline, int numConsumers, bool normalSubscribeCalls)
+        private IList<Task> SetupConsumers(StreamId streamId, string streamNamespace, string streamProviderName, AsyncPipeline pipeline, int numConsumers, bool normalSubscribeCalls)
         {
             var consumers = new List<IStreamLifecycleConsumerGrain>();
             var promises = new List<Task>();
-
-            long consumerIdStart = random.Next();
+            _ = random.Next();
             for (int loopCount = 0; loopCount < numConsumers; loopCount++)
             {
                 var grain = this.GrainFactory.GetGrain<IStreamLifecycleConsumerGrain>(Guid.NewGuid());
@@ -648,11 +659,11 @@ namespace UnitTests.StreamingTests
                 Task promise;
                 if (normalSubscribeCalls)
                 {
-                    promise = grain.BecomeConsumer(streamId, streamNamespace, streamProviderName);
+                    promise = grain.BecomeConsumer(streamId, streamProviderName);
                 }
                 else
                 {
-                    promise = grain.TestBecomeConsumerSlim(streamId, streamNamespace, streamProviderName);
+                    promise = grain.TestBecomeConsumerSlim(streamId, streamProviderName);
                 }
 
                 //if (loopCount == 0)
@@ -758,11 +769,12 @@ namespace UnitTests.StreamingTests
             var pubSub = StreamTestUtils.GetStreamPubSub(this.InternalClient);
 
             // Check Consumer counts
-            int consumerCount = await pubSub.ConsumerCount(streamId, streamProviderName, StreamNamespace);
+            var streamId1 = new InternalStreamId(streamProviderName, StreamId.Create(StreamNamespace, streamId));
+            int consumerCount = await pubSub.ConsumerCount(streamId1);
             Assert.Equal(numConsumers,  consumerCount);  //  "ConsumerCount for Stream {0}", streamId
 
             // Check Producer counts
-            int producerCount = await pubSub.ProducerCount(streamId, streamProviderName, StreamNamespace);
+            int producerCount = await pubSub.ProducerCount(streamId1);
             Assert.Equal(numProducers,  producerCount);  //  "ProducerCount for Stream {0}", streamId
 
             // Check message counts received by consumers
@@ -786,13 +798,10 @@ namespace UnitTests.StreamingTests
             List<IStreamLifecycleProducerGrain> producers, List<IStreamLifecycleConsumerGrain> consumers,
             bool useFanOut)
         {
-            long nextGrainId = random.Next();
-
             //var promises = new List<Task>();
             AsyncPipeline pipeline = new AsyncPipeline(InitPipelineSize);
 
             // Consumers
-            long consumerIdStart = nextGrainId;
             for (int loopCount = 0; loopCount < numConsumers; loopCount++)
             {
                 var grain = this.GrainFactory.GetGrain<IStreamLifecycleConsumerGrain>(Guid.NewGuid());
@@ -825,10 +834,8 @@ namespace UnitTests.StreamingTests
                 //output.WriteLine("InitializeTopology: Waiting for {0} consumers to initialize", pipeline.Count);
                 pipeline.Wait();
             }
-            nextGrainId += numConsumers;
 
             // Producers
-            long producerIdStart = nextGrainId;
             pipeline = new AsyncPipeline(InitPipelineSize);
             for (int loopCount = 0; loopCount < numProducers; loopCount++)
             {

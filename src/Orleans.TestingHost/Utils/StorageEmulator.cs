@@ -38,7 +38,7 @@ namespace Orleans.TestingHost.Utils
         /// <returns></returns>
         public static bool IsStarted()
         {
-            return GetStorageEmulatorProcess() != null;
+            return GetStorageEmulatorProcess();
         }
 
 
@@ -149,6 +149,7 @@ namespace Orleans.TestingHost.Utils
         /// <returns>A new <see cref="ProcessStartInfo">ProcessStartInfo</see> that has the given arguments.</returns>
         private static ProcessStartInfo CreateProcessArguments(string arguments)
         {
+#pragma warning disable CA1416 // Validate platform compatibility
             return new ProcessStartInfo(GetStorageEmulatorPath())
             {
                 WindowStyle = ProcessWindowStyle.Hidden,
@@ -160,18 +161,26 @@ namespace Orleans.TestingHost.Utils
                 RedirectStandardError = true,
                 Arguments = arguments
             };
+#pragma warning restore CA1416
         }
 
         /// <summary>
         /// Queries the storage emulator process from the system.
         /// </summary>
         /// <returns></returns>
-        private static Process GetStorageEmulatorProcess()
+        private static bool GetStorageEmulatorProcess()
         {
-            return (storageEmulatorProcessNames
-                .Select(Process.GetProcessesByName)
-                .Where(processes => processes.Length > 0)
-                .Select(processes => processes[0])).FirstOrDefault();
+            foreach (var name in storageEmulatorProcessNames)
+            {
+                var ps = Process.GetProcessesByName(name);
+                if (ps.Length != 0)
+                {
+                    foreach (var p in ps)
+                        p.Dispose();
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -185,8 +194,7 @@ namespace Orleans.TestingHost.Utils
 
             return storageEmulatorFilenames
                 .Select(filename => Path.Combine(exeBasePath, filename))
-                .Where(File.Exists)
-                .FirstOrDefault();
+                .FirstOrDefault(File.Exists);
         }
 
 

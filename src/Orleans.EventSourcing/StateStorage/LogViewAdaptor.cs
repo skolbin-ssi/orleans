@@ -1,15 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Orleans;
-using Orleans.LogConsistency;
 using Orleans.Storage;
 using Orleans.EventSourcing.Common;
-using Orleans.Runtime;
 
 namespace Orleans.EventSourcing.StateStorage
 {
@@ -180,17 +176,6 @@ namespace Orleans.EventSourcing.StateStorage
                     batchsuccessfullywritten = true;
                 }
             }
-
-
-            // broadcast notifications to all other clusters
-            if (batchsuccessfullywritten)
-                BroadcastNotification(new UpdateNotificationMessage()
-                   {
-                       Version = GlobalStateCache.StateAndMetaData.GlobalVersion,
-                       Updates = updates.Select(se => se.Entry).ToList(),
-                       Origin = Services.MyClusterId,
-                       ETag = GlobalStateCache.ETag
-                   });
 
             exit_operation("WriteAsync");
 

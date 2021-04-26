@@ -1,17 +1,14 @@
-using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Orleans.Runtime;
-using Orleans.Runtime.Configuration;
 using Orleans.TestingHost;
 using TestExtensions;
 using UnitTests.GrainInterfaces;
 using UnitTests.Grains;
 using Xunit;
-using System.Collections.Generic;
 using System.Linq;
 using Orleans.Hosting;
-using Orleans.TestingHost.Utils;
+using System;
 
 namespace DependencyInjection.Tests
 {
@@ -21,9 +18,9 @@ namespace DependencyInjection.Tests
 
         //contains IServiceCollection configuration for the following tests, so should be part of the test runner.
         //while different ServiceProviderFactory set up should be in the more concrete test files
-        protected class TestSiloBuilderConfigurator : ISiloBuilderConfigurator
+        protected class TestSiloBuilderConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder.ConfigureServices(services =>
                 {
@@ -52,7 +49,7 @@ namespace DependencyInjection.Tests
         public async Task CanGetGrainWithInjectedDependencies()
         {
             IDIGrainWithInjectedServices grain = this.fixture.GrainFactory.GetGrain<IDIGrainWithInjectedServices>(GetRandomGrainId());
-            long ignored = await grain.GetLongValue();
+            var _ = await grain.GetLongValue();
         }
 
         [Fact]
@@ -61,7 +58,7 @@ namespace DependencyInjection.Tests
             // please don't inject your implemetation of IGrainFactory to DI container in Startup Class, 
             // since we are currently not supporting replacing IGrainFactory 
             IDIGrainWithInjectedServices grain = this.fixture.GrainFactory.GetGrain<IDIGrainWithInjectedServices>(GetRandomGrainId());
-            long ignored = await grain.GetGrainFactoryId();
+            _ = await grain.GetGrainFactoryId();
         }
 
         [Fact]
@@ -103,8 +100,8 @@ namespace DependencyInjection.Tests
             var grain2 = this.fixture.GrainFactory.GetGrain<IDIGrainWithInjectedServices>(id2);
 
             // the injected service will only return a different value if it's a different instance
-            Assert.Contains(id1.ToString(), await grain1.GetStringValue());
-            Assert.Contains(id2.ToString(), await grain2.GetStringValue());
+            Assert.Contains(id1.ToString("X"), await grain1.GetStringValue());
+            Assert.Contains(id2.ToString("X"), await grain2.GetStringValue());
 
             await grain1.DoDeactivate();
             await grain2.DoDeactivate();
@@ -160,9 +157,8 @@ namespace DependencyInjection.Tests
         public async Task CannotGetExplictlyRegisteredGrain()
         {
             ISimpleDIGrain grain = this.fixture.GrainFactory.GetGrain<ISimpleDIGrain>(GetRandomGrainId(), grainClassNamePrefix: "UnitTests.Grains.ExplicitlyRegistered");
-            var exception = await Assert.ThrowsAsync<OrleansException>(() => grain.GetLongValue());
-            Assert.Contains("Error creating activation for", exception.Message);
-            Assert.Contains(nameof(ExplicitlyRegisteredSimpleDIGrain), exception.Message);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => grain.GetLongValue());
+            Assert.Contains("Unable to resolve service for type 'System.String' while attempting to activate 'UnitTests.Grains.ExplicitlyRegisteredSimpleDIGrain'", exception.Message);
         }
 
         [Fact]

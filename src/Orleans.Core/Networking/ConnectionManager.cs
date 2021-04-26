@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orleans.Configuration;
@@ -14,15 +15,15 @@ namespace Orleans.Runtime.Messaging
     internal sealed class ConnectionManager
     {
         [ThreadStatic]
-        private static int nextConnection;
+        private static uint nextConnection;
 
-        private readonly ConcurrentDictionary<SiloAddress, ConnectionEntry> connections = new ConcurrentDictionary<SiloAddress, ConnectionEntry>();
+        private readonly ConcurrentDictionary<SiloAddress, ConnectionEntry> connections = new();
         private readonly ConnectionOptions connectionOptions;
         private readonly ConnectionFactory connectionFactory;
         private readonly NetworkingTrace trace;
-        private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
+        private readonly CancellationTokenSource shutdownCancellation = new();
         private readonly object lockObj = new object();
-        private readonly TaskCompletionSource<int> closedTaskCompletionSource = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<int> closedTaskCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ConnectionManager(
             IOptions<ConnectionOptions> connectionOptions,
@@ -34,132 +35,98 @@ namespace Orleans.Runtime.Messaging
             this.trace = trace;
         }
 
-        public int ConnectionCount
-        {
-            get
-            {
-                var count = 0;
-                foreach (var entry in this.connections)
-                {
-                    var values = entry.Value.Connections;
-                    if (values.IsDefault) continue;
-                    count += values.Length;
-                }
-
-                return count;
-            }
-        }
+        public int ConnectionCount => connections.Sum(e => e.Value.Connections.Length);
 
         public Task Closed => this.closedTaskCompletionSource.Task;
 
-        public ImmutableArray<SiloAddress> GetConnectedAddresses() => this.connections.Keys.ToImmutableArray();
+        public List<SiloAddress> GetConnectedAddresses() => connections.Select(i => i.Key).ToList();
 
         public ValueTask<Connection> GetConnection(SiloAddress endpoint)
         {
-            if (this.connections.TryGetValue(endpoint, out var entry) && entry.TryGetConnection(out var connection))
+            if (this.connections.TryGetValue(endpoint, out var entry) && entry.NextConnection() is { } connection)
             {
-                var pendingAttempt = entry.PendingConnection;
-                if (!entry.HasSufficientConnections && (pendingAttempt is null || pendingAttempt.IsCompleted))
+                if (!entry.HasSufficientConnections(connectionOptions) && entry.PendingConnection is null)
                 {
-                    this.GetConnectionAsync(entry.Endpoint).Ignore();
+                    this.GetConnectionAsync(endpoint).Ignore();
                 }
 
                 // Return the existing connection.
-                return new ValueTask<Connection>(connection);
+                return new(connection);
             }
 
             // Start a new connection attempt since there are no suitable connections.
-            return new ValueTask<Connection>(this.GetConnectionAsync(endpoint));
+            return new(this.GetConnectionAsync(endpoint));
+        }
+
+        public bool TryGetConnection(SiloAddress endpoint, out Connection connection)
+        {
+            if (this.connections.TryGetValue(endpoint, out var entry) && entry.NextConnection() is { } c)
+            {
+                connection = c;
+                return true;
+            }
+
+            connection = null;
+            return false;
         }
 
         private async Task<Connection> GetConnectionAsync(SiloAddress endpoint)
         {
-            RequestContext.Clear();
-
+            await Task.Yield();
             while (true)
             {
-                await Task.Yield();
-                this.cancellation.Token.ThrowIfCancellationRequested();
+                if (this.shutdownCancellation.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException("Shutting down");
+                }
 
-                ConnectionEntry entry;
                 Task pendingAttempt;
                 lock (this.lockObj)
                 {
-                    entry = this.GetOrCreateEntry(endpoint);
-
-                    // Remove defunct connections.
-                    foreach (var c in entry.Connections)
-                    {
-                        if (!c.IsValid) entry.Connections = entry.Connections.Remove(c);
-                    }
+                    var entry = this.GetOrCreateEntry(endpoint);
+                    entry.RemoveDefunct();
 
                     // If there are sufficient connections available then return an existing connection.
-                    if (entry.HasSufficientConnections && entry.TryGetConnection(out var connection))
+                    if (entry.HasSufficientConnections(connectionOptions) && entry.NextConnection() is { } connection)
                     {
                         return connection;
                     }
 
-                    entry.ThrowIfRecentConnectionFailure();
-
-                    pendingAttempt = entry.PendingConnection;
+                    var remainingDelay = entry.GetRemainingRetryDelay(connectionOptions);
+                    if (remainingDelay.Ticks > 0)
+                    {
+                        throw new ConnectionFailedException($"Unable to connect to {endpoint}, will retry after {remainingDelay.TotalMilliseconds}ms");
+                    }
 
                     // If there is no pending attempt then start one, otherwise the pending attempt will be awaited before reevaluating.
-                    if (pendingAttempt is null)
-                    {
-                        // Initiate a new connection.
-                        pendingAttempt = entry.PendingConnection = this.ConnectAsync(endpoint);
-                    }
+                    pendingAttempt = entry.PendingConnection ??= ConnectAsync(endpoint, entry);
                 }
 
-                try
-                {
-                    await pendingAttempt;
-                }
-                finally
-                {
-                    lock (this.lockObj)
-                    {
-                        // Clear the completed attempt.
-                        if (ReferenceEquals(pendingAttempt, entry.PendingConnection))
-                        {
-                            entry.PendingConnection = null;
-                        }
-                    }
-                }
+                await pendingAttempt;
             }
         }
 
-        private void OnConnectionFailed(SiloAddress address, DateTime lastFailure)
+        private void OnConnectionFailed(ConnectionEntry entry)
         {
+            var lastFailure = DateTime.UtcNow;
             lock (this.lockObj)
             {
-                var entry = this.GetOrCreateEntry(address);
-                if (entry.LastFailure.HasValue)
-                {
-                    var ticks = Math.Max(lastFailure.Ticks, entry.LastFailure.Value.Ticks);
-                    lastFailure = new DateTime(ticks, DateTimeKind.Utc);
-                }
-
-                // Remove defunct connections.
-                var connections = entry.Connections;
-                foreach (var c in connections)
-                {
-                    if (!c.IsValid) connections = connections.Remove(c);
-                }
-
-                entry.LastFailure = lastFailure;
-                entry.Connections = connections;
+                if (entry.LastFailure < lastFailure) entry.LastFailure = lastFailure;
+                entry.PendingConnection = null;
+                entry.RemoveDefunct();
             }
         }
 
-        public void OnConnected(SiloAddress address, Connection connection)
+        public void OnConnected(SiloAddress address, Connection connection) => OnConnected(address, connection, null);
+
+        private void OnConnected(SiloAddress address, Connection connection, ConnectionEntry entry)
         {
             lock (this.lockObj)
             {
-                var entry = this.GetOrCreateEntry(address);
-                var newConnections = entry.Connections.Contains(connection) ? entry.Connections : entry.Connections.Add(connection);
+                entry ??= GetOrCreateEntry(address);
+                entry.Connections = entry.Connections.Contains(connection) ? entry.Connections : entry.Connections.Add(connection);
                 entry.LastFailure = default;
-                entry.Connections = newConnections;
+                entry.PendingConnection = null;
             }
 
             this.trace.LogInformation("Connection {Connection} established with {Silo}", connection, address);
@@ -180,47 +147,31 @@ namespace Orleans.Runtime.Messaging
                         // Remove the entire entry.
                         this.connections.TryRemove(address, out _);
                     }
-
-                    foreach (var c in entry.Connections)
+                    else
                     {
-                        if (!c.IsValid) entry.Connections = entry.Connections.Remove(c);
+                        entry.RemoveDefunct();
                     }
                 }
             }
 
-            if (exception != null)
+            if (exception != null && !this.shutdownCancellation.IsCancellationRequested)
             {
                 this.trace.LogWarning(
-                    "Connection {Connection} to endpoint {EndPoint} terminated with exception {Exception}",
-                    connection,
-                    address,
-                    exception);
+                    exception,
+                    "Connection {Connection} terminated",
+                    connection);
             }
             else
             {
                 this.trace.LogDebug(
-                    "Connection {Connection} to endpoint {EndPoint} closed",
-                    connection,
-                    address);
+                    "Connection {Connection} closed",
+                    connection);
             }
         }
 
-        private ConnectionEntry GetOrCreateEntry(SiloAddress address)
-        {
-            lock (this.lockObj)
-            {
-                if (!this.connections.TryGetValue(address, out var entry))
-                {
-                    // Initialize the entry for this endpoint.
-                    entry = new ConnectionEntry(this.connectionOptions, address, ImmutableArray<Connection>.Empty, default);
-                    this.connections[address] = entry;
-                }
+        private ConnectionEntry GetOrCreateEntry(SiloAddress address) => connections.GetOrAdd(address, _ => new());
 
-                return entry;
-            }
-        }
-
-        private async Task<Connection> ConnectAsync(SiloAddress address)
+        private async Task<Connection> ConnectAsync(SiloAddress address, ConnectionEntry entry)
         {
             await Task.Yield();
             CancellationTokenSource openConnectionCancellation = default;
@@ -235,12 +186,10 @@ namespace Orleans.Runtime.Messaging
                 }
 
                 // Cancel pending connection attempts either when the host terminates or after the configured time limit.
-                openConnectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(this.cancellation.Token);
+                openConnectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(this.shutdownCancellation.Token, default);
                 openConnectionCancellation.CancelAfter(this.connectionOptions.OpenConnectionTimeout);
 
-                var connection = await this.connectionFactory.ConnectAsync(address, openConnectionCancellation.Token)
-                    .AsTask()
-                    .WithCancellation(openConnectionCancellation.Token);
+                var connection = await this.connectionFactory.ConnectAsync(address, openConnectionCancellation.Token);
 
                 if (this.trace.IsEnabled(LogLevel.Information))
                 {
@@ -250,17 +199,20 @@ namespace Orleans.Runtime.Messaging
                 }
 
                 this.StartConnection(address, connection);
-                this.OnConnected(address, connection);
+                this.OnConnected(address, connection, entry);
                 return connection;
             }
             catch (Exception exception)
             {
-                this.OnConnectionFailed(address, DateTime.UtcNow);
+                this.OnConnectionFailed(entry);
 
                 this.trace.LogWarning(
-                    "Connection attempt to endpoint {EndPoint} failed with exception {Exception}",
-                    address,
-                    exception);
+                    exception,
+                    "Connection attempt to endpoint {EndPoint} failed",
+                    address);
+
+                if (exception is OperationCanceledException && openConnectionCancellation?.IsCancellationRequested == true && !shutdownCancellation.IsCancellationRequested)
+                    throw new ConnectionFailedException($"Connection attempt to endpoint {address} timed out after {connectionOptions.OpenConnectionTimeout}");
 
                 throw new ConnectionFailedException(
                     $"Unable to connect to endpoint {address}. See {nameof(exception.InnerException)}", exception);
@@ -271,38 +223,42 @@ namespace Orleans.Runtime.Messaging
             }
         }
 
-        public void Abort(SiloAddress endpoint)
+        public async Task CloseAsync(SiloAddress endpoint)
         {
-            ConnectionEntry entry;
+            ImmutableArray<Connection> connections;
             lock (this.lockObj)
             {
-                if (!this.connections.TryGetValue(endpoint, out entry))
+                if (!this.connections.TryGetValue(endpoint, out var entry))
                 {
                     return;
                 }
 
-                lock (this.lockObj)
+                connections = entry.Connections;
+                if (entry.PendingConnection is null)
                 {
-                    if (entry.PendingConnection is null)
-                    {
-                        this.connections.TryRemove(endpoint, out _);
-                    }
+                    this.connections.TryRemove(endpoint, out _);
                 }
             }
 
-            if (entry is ConnectionEntry && !entry.Connections.IsDefault)
+            if (connections.Length == 1)
             {
-                var exception = new ConnectionAbortedException($"Aborting connection to {endpoint}");
-                foreach (var connection in entry.Connections)
+                await connections[0].CloseAsync(exception: null);
+            }
+            else if (!connections.IsEmpty)
+            {
+                var closeTasks = new List<Task>();
+                foreach (var connection in connections)
                 {
                     try
                     {
-                        connection.Close(exception);
+                        closeTasks.Add(connection.CloseAsync(exception: null));
                     }
                     catch
                     {
                     }
                 }
+
+                await Task.WhenAll(closeTasks);
             }
         }
 
@@ -310,20 +266,25 @@ namespace Orleans.Runtime.Messaging
         {
             try
             {
-                this.cancellation.Cancel(throwOnFirstException: false);
-
-                var connectionAbortedException = new ConnectionAbortedException("Stopping");
-                var cycles = 0;
-                while (this.ConnectionCount > 0)
+                if (this.trace.IsEnabled(LogLevel.Information))
                 {
-                    foreach (var entry in this.connections.Values.ToImmutableList())
+                    this.trace.LogInformation("Shutting down connections");
+                }
+
+                this.shutdownCancellation.Cancel(throwOnFirstException: false);
+
+                var cycles = 0;
+                for (var closeTasks = new List<Task>(); ; closeTasks.Clear())
+                {
+                    var pendingConnections = false;
+                    foreach (var kv in connections)
                     {
-                        if (entry.Connections.IsDefaultOrEmpty) continue;
-                        foreach (var connection in entry.Connections)
+                        pendingConnections |= kv.Value.PendingConnection != null;
+                        foreach (var connection in kv.Value.Connections)
                         {
                             try
                             {
-                                connection.Close(connectionAbortedException);
+                                closeTasks.Add(connection.CloseAsync(exception: null));
                             }
                             catch
                             {
@@ -331,18 +292,23 @@ namespace Orleans.Runtime.Messaging
                         }
                     }
 
-                    if (ct.IsCancellationRequested) break;
+                    if (closeTasks.Count > 0)
+                    {
+                        await Task.WhenAny(Task.WhenAll(closeTasks), ct.WhenCancelled());
+                        if (ct.IsCancellationRequested) break;
+                    }
+                    else if (!pendingConnections) break;
 
                     await Task.Delay(10);
-                    if (++cycles > 100 && cycles % 500 == 0 && this.ConnectionCount > 0)
+                    if (++cycles > 100 && cycles % 500 == 0 && this.ConnectionCount is var remaining and > 0)
                     {
-                        this.trace?.LogWarning("Waiting for {NumRemaining} connections to terminate", this.ConnectionCount);
+                        this.trace?.LogWarning("Waiting for {NumRemaining} connections to terminate", remaining);
                     }
                 }
             }
             catch (Exception exception)
             {
-                this.trace?.LogWarning("Exception during shutdown: {Exception}", exception);
+                this.trace?.LogWarning(exception, "Exception during shutdown");
             }
             finally
             {
@@ -352,13 +318,11 @@ namespace Orleans.Runtime.Messaging
 
         private void StartConnection(SiloAddress address, Connection connection)
         {
-            ThreadPool.UnsafeQueueUserWorkItem(this.StartConnectionCore, (address, connection));
-        }
-
-        private void StartConnectionCore(object state)
-        {
-            var (address, connection) = ((SiloAddress, Connection))state;
-            _ = this.RunConnectionAsync(address, connection);
+            ThreadPool.UnsafeQueueUserWorkItem(state =>
+            {
+                var (t, address, connection) = ((ConnectionManager, SiloAddress, Connection))state;
+                _ = t.RunConnectionAsync(address, connection);
+            }, (this, address, connection));
         }
 
         private async Task RunConnectionAsync(SiloAddress address, Connection connection)
@@ -391,85 +355,43 @@ namespace Orleans.Runtime.Messaging
             return null;
         }
 
-        private class ConnectionEntry
+        private sealed class ConnectionEntry
         {
-            private readonly ConnectionOptions connectionOptions;
-
-            public ConnectionEntry(
-                ConnectionOptions connectionOptions,
-                SiloAddress endpoint,
-                ImmutableArray<Connection> connections,
-                DateTime? lastFailure)
-            {
-                this.connectionOptions = connectionOptions;
-                this.Endpoint = endpoint;
-                this.Connections = connections;
-                this.LastFailure = lastFailure;
-            }
-
             public Task PendingConnection { get; set; }
-            public DateTime? LastFailure { get; set; }
-            public ImmutableArray<Connection> Connections { get; set; }
-            public SiloAddress Endpoint { get; }
+            public DateTime LastFailure { get; set; }
+            public ImmutableArray<Connection> Connections { get; set; } = ImmutableArray<Connection>.Empty;
 
-            public TimeSpan RemainingRetryDelay
+            public TimeSpan GetRemainingRetryDelay(ConnectionOptions options)
             {
-                get
+                var lastFailure = this.LastFailure;
+                if (lastFailure.Ticks > 0)
                 {
-                    var lastFailure = this.LastFailure;
-                    if (lastFailure.HasValue)
+                    var retryAfter = lastFailure + options.ConnectionRetryDelay;
+                    var remainingDelay = retryAfter - DateTime.UtcNow;
+                    if (remainingDelay.Ticks > 0)
                     {
-                        var now = DateTime.UtcNow;
-                        var retryAfter = lastFailure.Value.Add(this.connectionOptions.ConnectionRetryDelay);
-                        var remainingDelay = retryAfter.Subtract(now);
-                        if (remainingDelay > TimeSpan.Zero)
-                        {
-                            return remainingDelay;
-                        }
+                        return remainingDelay;
                     }
-
-                    return TimeSpan.Zero;
                 }
+
+                return default;
             }
 
-            public bool HasSufficientConnections
-            {
-                get
-                {
-                    var connections = this.Connections;
-                    return !connections.IsDefaultOrEmpty && connections.Length >= this.connectionOptions.ConnectionsPerEndpoint;
-                }
-            }
+            public bool HasSufficientConnections(ConnectionOptions options) => Connections.Length >= options.ConnectionsPerEndpoint;
 
-            public bool TryGetConnection(out Connection connection)
+            public Connection NextConnection()
             {
-                connection = default;
                 var connections = this.Connections;
-                if (connections.IsDefaultOrEmpty)
+                if (connections.IsEmpty)
                 {
-                    return false;
+                    return null;
                 }
 
-                nextConnection = (nextConnection + 1) % connections.Length;
-                var result = connections[nextConnection];
-
-                if (result.IsValid)
-                {
-                    connection = result;
-                    return true;
-                }
-
-                return false;
+                var result = connections.Length == 1 ? connections[0] : connections[(int)(++nextConnection % (uint)connections.Length)];
+                return result.IsValid ? result : null;
             }
 
-            public void ThrowIfRecentConnectionFailure()
-            {
-                var remainingDelay = this.RemainingRetryDelay;
-                if (remainingDelay > TimeSpan.Zero)
-                {
-                    throw new ConnectionFailedException($"Unable to connect to {this.Endpoint}, will retry after {remainingDelay.TotalMilliseconds}ms");
-                }
-            }
+            public void RemoveDefunct() => Connections = Connections.RemoveAll(c => !c.IsValid);
         }
     }
 }

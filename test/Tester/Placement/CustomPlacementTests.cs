@@ -4,7 +4,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Orleans;
-using Orleans.Core;
 using Orleans.Runtime;
 using Orleans.Runtime.Placement;
 using Orleans.TestingHost;
@@ -32,12 +31,11 @@ namespace Tester.CustomPlacementTests
                 builder.AddSiloBuilderConfigurator<TestSiloBuilderConfigurator>();
             }
 
-            private class TestSiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class TestSiloBuilderConfigurator : ISiloConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder.Configure<SiloMessagingOptions>(options => options.AssumeHomogenousSilosForTesting = true);
-                    hostBuilder.Configure<TypeManagementOptions>(options => options.TypeMapRefreshInterval = TimeSpan.FromMilliseconds(100));
                     hostBuilder.ConfigureServices(ConfigureServices);
                 }
             }
@@ -134,12 +132,12 @@ namespace Tester.CustomPlacementTests
             const int nGrains = 100;
 
             Task<SiloAddress>[] tasks = new Task<SiloAddress>[nGrains];
-            List<IGrainIdentity> grains = new List<IGrainIdentity>();
+            List<GrainId> grains = new List<GrainId>();
             for (int i = 0; i < nGrains; i++)
             {
                 var g = this.fixture.GrainFactory.GetGrain<IHashBasedPlacementGrain>(Guid.NewGuid(),
                     "UnitTests.Grains.HashBasedBasedPlacementGrain");
-                grains.Add(g.GetGrainIdentity());
+                grains.Add(g.GetGrainId());
                 tasks[i] = g.GetSiloAddress();
             }
 

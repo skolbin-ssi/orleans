@@ -29,9 +29,9 @@ namespace GoogleUtils.Tests.Streaming
             builder.AddClientBuilderConfigurator<MyClientBuilderConfigurator>();
         }
 
-        private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+        private class MySiloBuilderConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder
                     .AddMemoryGrainStorage("MemoryStore", op => op.NumStorageGrains = 1)
@@ -63,8 +63,9 @@ namespace GoogleUtils.Tests.Streaming
             }
         }
 
-        public PubSubStreamTests()
+        public override async Task InitializeAsync()
         {
+            await base.InitializeAsync();
             runner = new SingleStreamTestRunner(InternalClient, PUBSUB_STREAM_PROVIDER_NAME);
         }
 

@@ -19,18 +19,6 @@ namespace UnitTests.ConcurrencyTests
 
         public class Fixture : BaseTestClusterFixture
         {
-            protected override void ConfigureTestCluster(TestClusterBuilder builder)
-            {
-                builder.AddSiloBuilderConfigurator<SiloConfigurator>();
-            }
-        }
-
-        public class SiloConfigurator : ISiloBuilderConfigurator
-        {
-            public void Configure(ISiloHostBuilder hostBuilder)
-            {
-                hostBuilder.Configure<SchedulingOptions>(options => options.MaxActiveThreads = 2);
-            }
         }
 
         public ConcurrencyTests(Fixture fixture)

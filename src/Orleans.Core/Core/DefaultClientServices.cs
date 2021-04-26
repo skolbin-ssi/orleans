@@ -6,7 +6,7 @@ using Orleans.ApplicationParts;
 using Orleans.Configuration;
 using Orleans.Configuration.Internal;
 using Orleans.Configuration.Validators;
-using Orleans.Hosting;
+using Orleans.GrainReferences;
 using Orleans.Messaging;
 using Orleans.Metadata;
 using Orleans.Networking.Shared;
@@ -15,14 +15,12 @@ using Orleans.Runtime;
 using Orleans.Runtime.Messaging;
 using Orleans.Serialization;
 using Orleans.Statistics;
-using Orleans.Streams;
-using Orleans.Streams.Core;
 
 namespace Orleans
 {
     internal static class DefaultClientServices
     {
-        public static void AddDefaultServices(IClientBuilder builder, IServiceCollection services)
+        public static void AddDefaultServices(IServiceCollection services)
         {
             // Options logging
             services.TryAddSingleton(typeof(IOptionFormatter<>), typeof(DefaultOptionsFormatter<>));
@@ -40,22 +38,31 @@ namespace Orleans
             services.TryAddSingleton<SchedulerStatisticsGroup>();
             services.TryAddSingleton<SerializationStatisticsGroup>();
             services.AddLogging();
-            services.TryAddSingleton<ExecutorService>();
-            services.TryAddSingleton<TypeMetadataCache>();
+            services.TryAddSingleton<GrainBindingsResolver>();
             services.TryAddSingleton<OutsideRuntimeClient>();
+            services.TryAddSingleton<ClientGrainContext>();
+            services.AddFromExisting<IGrainContextAccessor, ClientGrainContext>();
             services.TryAddFromExisting<IRuntimeClient, OutsideRuntimeClient>();
             services.TryAddFromExisting<IClusterConnectionStatusListener, OutsideRuntimeClient>();
             services.TryAddSingleton<GrainFactory>();
+            services.TryAddSingleton<GrainInterfaceTypeToGrainTypeResolver>();
+            services.TryAddSingleton<GrainReferenceActivator>();
+            services.AddSingleton<IGrainReferenceActivatorProvider, ImrGrainReferenceActivatorProvider>();
+            services.AddSingleton<IGrainReferenceActivatorProvider, UntypedGrainReferenceActivatorProvider>();
+            services.TryAddSingleton<ImrRpcProvider>();
+            services.TryAddSingleton<ImrGrainMethodInvokerProvider>();
+            services.TryAddSingleton<GrainReferenceSerializer>();
+            services.TryAddSingleton<GrainReferenceKeyStringConverter>();
             services.TryAddSingleton<IGrainReferenceRuntime, GrainReferenceRuntime>();
+            services.TryAddSingleton<GrainInterfaceTypeResolver>();
+            services.TryAddSingleton<GrainPropertiesResolver>();
+            services.TryAddSingleton<TypeConverter>();
             services.TryAddSingleton<IGrainCancellationTokenRuntime, GrainCancellationTokenRuntime>();
             services.TryAddFromExisting<IGrainFactory, GrainFactory>();
             services.TryAddFromExisting<IInternalGrainFactory, GrainFactory>();
-            services.TryAddFromExisting<IGrainReferenceConverter, GrainFactory>();
             services.TryAddSingleton<ClientProviderRuntime>();
             services.TryAddSingleton<MessageFactory>();
-            services.TryAddFromExisting<IStreamProviderRuntime, ClientProviderRuntime>();
             services.TryAddFromExisting<IProviderRuntime, ClientProviderRuntime>();
-            services.TryAddSingleton<IStreamSubscriptionManagerAdmin, StreamSubscriptionManagerAdmin>();
             services.TryAddSingleton<IInternalClusterClient, ClusterClient>();
             services.TryAddFromExisting<IClusterClient, IInternalClusterClient>();
 
@@ -64,16 +71,16 @@ namespace Orleans
                 sp.GetRequiredService<IOptions<ClientMessagingOptions>>().Value.LargeMessageWarningThreshold));
             services.TryAddSingleton<ITypeResolver, CachedTypeResolver>();
             services.TryAddSingleton<IFieldUtils, FieldUtils>();
-            services.AddSingleton<BinaryFormatterSerializer>();
-            services.AddSingleton<BinaryFormatterISerializableSerializer>();
-            services.AddFromExisting<IKeyedSerializer, BinaryFormatterISerializableSerializer>();
-#pragma warning disable CS0618 // Type or member is obsolete
+
+            // Register the ISerializable serializer first, so that it takes precedence
+            services.AddSingleton<DotNetSerializableSerializer>();
+            services.AddFromExisting<IKeyedSerializer, DotNetSerializableSerializer>();
+
             services.TryAddSingleton<ILBasedSerializer>();
             services.AddFromExisting<IKeyedSerializer, ILBasedSerializer>();
-#pragma warning restore CS0618 // Type or member is obsolete
 
             // Application parts
-            var parts = builder.GetApplicationPartManager();
+            var parts = services.GetApplicationPartManager();
             services.TryAddSingleton<IApplicationPartManager>(parts);
             parts.AddApplicationPart(new AssemblyPart(typeof(RuntimeVersion).Assembly) { IsFrameworkAssembly = true });
             parts.AddFeatureProvider(new BuiltInTypesSerializationFeaturePopulator());
@@ -83,7 +90,7 @@ namespace Orleans
 
             services.TryAddSingleton(typeof(IKeyedServiceCollection<,>), typeof(KeyedServiceCollection<,>));
 
-            // Add default option formatter if none is configured, for options which are requied to be configured 
+            // Add default option formatter if none is configured, for options which are required to be configured 
             services.ConfigureFormatter<ClusterOptions>();
             services.ConfigureFormatter<ClientMessagingOptions>();
             services.ConfigureFormatter<ConnectionOptions>();
@@ -114,6 +121,27 @@ namespace Orleans
             services.AddSingleton<GatewayManager>();
             services.AddSingleton<NetworkingTrace>();
             services.AddSingleton<MessagingTrace>();
+
+            // Type metadata
+            services.AddSingleton<ClientClusterManifestProvider>();
+            services.AddFromExisting<IClusterManifestProvider, ClientClusterManifestProvider>();
+            services.AddSingleton<ClientManifestProvider>();
+            services.AddSingleton<IGrainInterfaceTypeProvider, AttributeGrainInterfaceTypeProvider>();
+            services.AddSingleton<GrainTypeResolver>();
+            services.AddSingleton<IGrainTypeProvider, AttributeGrainTypeProvider>();
+            services.AddSingleton<IGrainTypeProvider, LegacyGrainTypeResolver>();
+            services.AddSingleton<GrainPropertiesResolver>();
+            services.AddSingleton<GrainInterfaceTypeResolver>();
+            services.AddSingleton<IGrainInterfacePropertiesProvider, AttributeGrainInterfacePropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, AttributeGrainPropertiesProvider>();
+            services.AddSingleton<IGrainInterfacePropertiesProvider, TypeNameGrainPropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, TypeNameGrainPropertiesProvider>();
+            services.AddSingleton<IGrainPropertiesProvider, ImplementedInterfaceProvider>();
+            // Logging helpers
+            services.AddSingleton<ClientLoggingHelper>();
+            services.AddFromExisting<ILifecycleParticipant<IClusterClientLifecycle>, ClientLoggingHelper>();
+            services.AddFromExisting<IGrainIdLoggingHelper, ClientLoggingHelper>();
+            services.AddFromExisting<IInvokeMethodRequestLoggingHelper, ClientLoggingHelper>();
         }
     }
 }

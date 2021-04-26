@@ -20,9 +20,9 @@ namespace Tester.Forwarding
         public const int NumberOfSilos = 2;
 
         public static readonly TimeSpan DeactivationTimeout = TimeSpan.FromSeconds(10);
-        internal class SiloBuilderConfigurator : ISiloBuilderConfigurator
+        internal class SiloBuilderConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder
                     .Configure<GrainCollectionOptions>(options =>
@@ -56,7 +56,7 @@ namespace Tester.Forwarding
             this.EnsurePreconditionsMet();
         }
 
-        [SkippableFact, TestCategory("Forward"), TestCategory("Functional")]
+        [Fact(Skip = "https://github.com/dotnet/orleans/issues/6423"), TestCategory("Forward"), TestCategory("Functional")]
         public async Task SiloGracefulShutdown_ForwardPendingRequest()
         {
             var grain = await GetLongRunningTaskGrainOnSecondary<bool>();
@@ -107,8 +107,7 @@ namespace Tester.Forwarding
         public async Task SiloGracefulShutdown_StuckActivation()
         {
             var grain = await GetTimerRequestGrainOnSecondary();
-
-            var promise = grain.StartAndWaitTimerTick(TimeSpan.FromMinutes(2));
+            _ = grain.StartAndWaitTimerTick(TimeSpan.FromMinutes(2));
 
             await Task.Delay(500);
             var stopwatch = Stopwatch.StartNew();

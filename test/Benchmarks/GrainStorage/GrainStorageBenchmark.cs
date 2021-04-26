@@ -1,16 +1,28 @@
-﻿using System;
+using System;
 using System.Threading.Tasks;
 using System.Diagnostics;
 using Orleans.Hosting;
 using Orleans.TestingHost;
 using TestExtensions;
 using BenchmarkGrainInterfaces.GrainStorage;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Benchmarks.GrainStorage
 {
-    public class GrainStorageBenchmark
+    public class GrainStorageBenchmark : IDisposable
     {
         private TestCluster host;
+        private int concurrent;
+        private int payloadSize;
+        private TimeSpan duration;
+
+        public GrainStorageBenchmark(int concurrent, int payloadSize, TimeSpan duration)
+        {
+            this.concurrent = concurrent;
+            this.payloadSize = payloadSize;
+            this.duration = duration;
+        }
 
         public void MemorySetup()
         {
@@ -36,17 +48,25 @@ namespace Benchmarks.GrainStorage
             this.host.Deploy();
         }
 
-        public class SiloMemoryStorageConfigurator : ISiloBuilderConfigurator
+        public void AdoNetSetup()
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            var builder = new TestClusterBuilder();
+            builder.AddSiloBuilderConfigurator<SiloAdoNetStorageConfigurator>();
+            this.host = builder.Build();
+            this.host.Deploy();
+        }
+
+        public class SiloMemoryStorageConfigurator : ISiloConfigurator
+        {
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder.AddMemoryGrainStorageAsDefault();
             }
         }
 
-        public class SiloAzureTableStorageConfigurator : ISiloBuilderConfigurator
+        public class SiloAzureTableStorageConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder.AddAzureTableGrainStorageAsDefault(options =>
                 {
@@ -55,9 +75,9 @@ namespace Benchmarks.GrainStorage
             }
         }
 
-        public class SiloAzureBlobStorageConfigurator : ISiloBuilderConfigurator
+        public class SiloAzureBlobStorageConfigurator : ISiloConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder.AddAzureBlobGrainStorageAsDefault(options =>
                 {
@@ -66,50 +86,66 @@ namespace Benchmarks.GrainStorage
             }
         }
 
-        public async Task RunAsync()
+        public class SiloAdoNetStorageConfigurator : ISiloConfigurator
         {
-            bool running = true;
-            Func<bool> isRunning = () => running;
-            Task[] tasks = { PersistLoop(isRunning), Task.Delay(TimeSpan.FromSeconds(30)) };
-            await Task.WhenAny(tasks);
-            running = false;
-            await Task.WhenAll(tasks);
+            public void Configure(ISiloBuilder hostBuilder)
+            {
+                hostBuilder.AddAdoNetGrainStorageAsDefault(options =>
+                {
+                    options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                });
+            }
         }
 
-        public async Task PersistLoop(Func<bool> running)
+        public async Task RunAsync()
         {
-            IPersistentGrain persistentGrain = this.host.Client.GetGrain<IPersistentGrain>(Guid.NewGuid());
-            // activate grain
-            await persistentGrain.Set(0);
-            int stored = 0;
-            int failed = 0;
-            TimeSpan maxCalltime = TimeSpan.MinValue;
             Stopwatch sw = Stopwatch.StartNew();
-            Stopwatch calltime = new Stopwatch();
+            bool running = true;
+            Func<bool> isRunning = () => running;
+            var runTask = Task.WhenAll(Enumerable.Range(0, concurrent).Select(i => RunAsync(i, isRunning)).ToList());
+            Task[] waitTasks = { runTask, Task.Delay(duration) };
+            await Task.WhenAny(waitTasks);
+            running = false;
+            var runResults = await runTask;
+            sw.Stop(); 
+            var reports = runResults.SelectMany(r => r).ToList();
+
+            var stored = reports.Count(r => r.Success);
+            var failed = reports.Count(r => !r.Success);
+            var calltimes = reports.Select(r => r.Elapsed.TotalMilliseconds);
+            var calltime = calltimes.Sum();
+            var maxCalltime = calltimes.Max();
+            var averageCalltime = calltimes.Average();
+            Console.WriteLine($"Performed {stored} persist (read & write) operations with {failed} failures in {sw.ElapsedMilliseconds}ms.");
+            Console.WriteLine($"Average time in ms per call was {averageCalltime}, with longest call taking {maxCalltime}ms.");
+            Console.WriteLine($"Total time waiting for the persistent store was {calltime}ms.");
+        }
+
+        public async Task<List<Report>> RunAsync(int instance, Func<bool> running)
+        {
+            var persistentGrain = this.host.Client.GetGrain<IPersistentGrain>(Guid.NewGuid());
+            // activate grain
+            await persistentGrain.Init(payloadSize);
+            var iteration = instance % payloadSize;
+            var reports = new List<Report>(5000);
             while (running())
             {
-                calltime.Restart();
-                try
-                {
-                    await persistentGrain.Set(stored);
-                    stored++;
-                    calltime.Stop();
-                }
-                catch (Exception)
-                {
-                    failed++;
-                    calltime.Stop();
-                }
-                maxCalltime = maxCalltime < calltime.Elapsed ? calltime.Elapsed : maxCalltime;
+                var report = await persistentGrain.TrySet(iteration);
+                reports.Add(report);
+                iteration = (iteration + 1) % payloadSize;
             }
-            sw.Stop();
-            Console.WriteLine($"Performed {stored} persist operations with {failed} failures in {sw.ElapsedMilliseconds}ms.");
-            Console.WriteLine($"Average time in ms per call was {sw.ElapsedMilliseconds/stored}, with longest call taking {maxCalltime.TotalMilliseconds}ms.");
+
+            return reports;
         }
 
         public void Teardown()
         {
             host.StopAllSilos();
+        }
+
+        public void Dispose()
+        {
+            host?.Dispose();
         }
     }
 }

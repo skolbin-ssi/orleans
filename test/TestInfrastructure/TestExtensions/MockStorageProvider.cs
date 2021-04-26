@@ -18,12 +18,12 @@ namespace UnitTests.StorageTests
 {
     public static class SiloBuilderExtensions
     {
-        public static ISiloHostBuilder AddTestStorageProvider<T>(this ISiloHostBuilder builder, string name) where T : IGrainStorage
+        public static ISiloBuilder AddTestStorageProvider<T>(this ISiloBuilder builder, string name) where T : IGrainStorage
         {
             return builder.AddTestStorageProvider(name, (sp, n) => ActivatorUtilities.CreateInstance<T>(sp));
         }
 
-        public static ISiloHostBuilder AddTestStorageProvider<T>(this ISiloHostBuilder builder, string name, Func<IServiceProvider, string, T> createInstance) where T : IGrainStorage
+        public static ISiloBuilder AddTestStorageProvider<T>(this ISiloBuilder builder, string name, Func<IServiceProvider, string, T> createInstance) where T : IGrainStorage
         {
             return builder.ConfigureServices(services =>
             {
@@ -194,6 +194,7 @@ namespace UnitTests.StorageTests
             lock (StateStore)
             {
                 var storedState = GetLastState(grainType, grainReference, grainState);
+                grainState.RecordExists = storedState != null;
                 grainState.State = this.serializationManager.DeepCopy(storedState); // Read current state data
             }
             return Task.CompletedTask;
@@ -211,6 +212,7 @@ namespace UnitTests.StorageTests
 
                 LastId = GetId(grainReference);
                 LastState = storedState;
+                grainState.RecordExists = true;
             }
             return Task.CompletedTask;
         }
@@ -226,6 +228,7 @@ namespace UnitTests.StorageTests
                 LastId = GetId(grainReference);
                 LastState = null;
             }
+            grainState.RecordExists = false;
             return Task.CompletedTask;
         }
 

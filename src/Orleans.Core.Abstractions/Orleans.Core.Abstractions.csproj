@@ -1,19 +1,18 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <PackageId>Microsoft.Orleans.Core.Abstractions</PackageId>
     <Title>Microsoft Orleans Core Abstractions</Title>
     <Description>Core abstractions library of Microsoft Orleans</Description>
-    <TargetFrameworks>$(StandardTargetFrameworks)</TargetFrameworks>
-  </PropertyGroup>
-
-  <PropertyGroup>
-    <AssemblyName>Orleans.Core.Abstractions</AssemblyName>
+    <TargetFrameworks>$(MultiTargetFrameworks)</TargetFrameworks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OrleansBuildTimeCodeGen>true</OrleansBuildTimeCodeGen>
     <RootNamespace>Orleans</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="System.Memory" Version="$(SystemMemoryVersion)" />
+  <ItemGroup Condition="$(TargetFrameworkIdentifier)=='.NETStandard'">
+    <PackageReference Include="Microsoft.Bcl.HashCode" Version="$(MicrosoftBclHashCodeVersion)" />
+    <PackageReference Include="System.Collections.Immutable" Version="$(SystemCollectionsImmutableVersion)" />
   </ItemGroup>
   
 </Project>

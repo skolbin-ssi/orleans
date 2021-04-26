@@ -134,6 +134,28 @@ namespace UnitTests.Grains
         }
     }
 
+    public class TestGrainLongActivateAsync : Grain, ITestGrainLongOnActivateAsync
+    {
+        public TestGrainLongActivateAsync()
+        {
+        }
+
+        public override async Task OnActivateAsync()
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3));
+
+            if (this.GetPrimaryKeyLong() == -2)
+                throw new ArgumentException("Primary key cannot be -2 for this test case");
+
+            await base.OnActivateAsync();
+        }
+
+        public Task<long> GetKey()
+        {
+            return Task.FromResult(this.GetPrimaryKeyLong());
+        }
+    }
+
     internal class GuidTestGrain : Grain, IGuidTestGrain
     {
         private string label;
@@ -187,12 +209,9 @@ namespace UnitTests.Grains
         private int count;
         private TaskCompletionSource<int> tcs = new TaskCompletionSource<int>();
         private IOneWayGrain other;
-        private Catalog catalog;
+        private GrainLocator grainLocator;
 
-        public OneWayGrain(Catalog catalog)
-        {
-            this.catalog = catalog;
-        }
+        public OneWayGrain(GrainLocator grainLocator) => this.grainLocator = grainLocator;
 
         private ILocalGrainDirectory LocalGrainDirectory => this.ServiceProvider.GetRequiredService<ILocalGrainDirectory>();
         private ILocalSiloDetails LocalSiloDetails => this.ServiceProvider.GetRequiredService<ILocalSiloDetails>();
@@ -210,10 +229,25 @@ namespace UnitTests.Grains
             return Task.CompletedTask;
         }
 
+        public ValueTask NotifyValueTask(ISimpleGrainObserver observer)
+        {
+            this.count++;
+            observer.StateChanged(this.count - 1, this.count);
+            return default;
+        }
+
         public async Task<bool> NotifyOtherGrain(IOneWayGrain otherGrain, ISimpleGrainObserver observer)
         {
             var task = otherGrain.Notify(observer);
             var completedSynchronously = task.Status == TaskStatus.RanToCompletion;
+            await task;
+            return completedSynchronously;
+        }
+
+        public async Task<bool> NotifyOtherGrainValueTask(IOneWayGrain otherGrain, ISimpleGrainObserver observer)
+        {
+            var task = otherGrain.NotifyValueTask(observer);
+            var completedSynchronously = task.IsCompleted;
             await task;
             return completedSynchronously;
         }
@@ -243,9 +277,9 @@ namespace UnitTests.Grains
         public Task<string> GetActivationAddress(IGrain grain)
         {
             var grainId = ((GrainReference)grain).GrainId;
-            if (this.catalog.FastLookup(grainId, out var addresses))
+            if (this.grainLocator.TryLocalLookup(grainId, out var result))
             {
-                return Task.FromResult(addresses.Addresses.Single().ToString());
+                return Task.FromResult(result.ToString());
             }
 
             return Task.FromResult<string>(null);
@@ -266,6 +300,11 @@ namespace UnitTests.Grains
             throw new Exception("GET OUT!");
         }
 
+        public ValueTask ThrowsOneWayValueTask()
+        {
+            throw new Exception("GET OUT (ValueTask)!");
+        }
+
         public Task<SiloAddress> GetSiloAddress()
         {
             return Task.FromResult(this.LocalSiloDetails.SiloAddress);
@@ -273,7 +312,7 @@ namespace UnitTests.Grains
 
         public Task<SiloAddress> GetPrimaryForGrain()
         {
-            var grainId = (GrainId)this.Identity;
+            var grainId = (GrainId)this.GrainId;
             var primaryForGrain = this.LocalGrainDirectory.GetPrimaryForGrain(grainId);
             return Task.FromResult(primaryForGrain);
         }
@@ -301,9 +340,21 @@ namespace UnitTests.Grains
             return Task.CompletedTask;
         }
 
+        public ValueTask NotifyValueTask(ISimpleGrainObserver observer)
+        {
+            this.count++;
+            observer.StateChanged(this.count - 1, this.count);
+            return default;
+        }
+
         public Task<int> GetCount() => Task.FromResult(this.count);
 
         public Task Throws()
+        {
+            throw new Exception("GET OUT!");
+        }
+
+        public ValueTask ThrowsValueTask()
         {
             throw new Exception("GET OUT!");
         }

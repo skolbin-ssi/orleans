@@ -27,24 +27,12 @@ namespace Orleans.Runtime
 
         public void OnFatalException(object sender, string context, Exception exception)
         {
-            if (exception != null)
-            {
-                this.log.LogError(
-                    (int)ErrorCode.Logger_ProcessCrashing,
-                    exception,
-                    "Fatal error from {Sender}. Context: {Context}. Exception: {Exception}",
-                    sender,
-                    context,
-                    exception);
-            }
-            else
-            {
-                this.log.LogError(
-                    (int)ErrorCode.Logger_ProcessCrashing,
-                    "Fatal error from {Sender}. Context: {Context}",
-                    sender,
-                    context);
-            }
+            this.log.LogError(
+                (int)ErrorCode.Logger_ProcessCrashing,
+                exception,
+                "Fatal error from {Sender}. Context: {Context}",
+                sender,
+                context);
 
             if (!this.clusterMembershipOptions.IsRunningAsUnitTest)
             {
@@ -58,7 +46,7 @@ namespace Orleans.Runtime
 
                 if (Debugger.IsAttached) Debugger.Break();
 
-                Environment.FailFast(msg);
+                Environment.FailFast(msg, exception);
             }
             else
             {

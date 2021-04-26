@@ -26,9 +26,9 @@ namespace ServiceBus.Tests.StreamingTests
                 builder.AddSiloBuilderConfigurator<MySiloBuilderConfigurator>();
             }
 
-            private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class MySiloBuilderConfigurator : ISiloConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder
                         .AddMemoryGrainStorage("PubSubStore")
@@ -37,7 +37,7 @@ namespace ServiceBus.Tests.StreamingTests
                             {
                                 b.ConfigureEventHub(ob => ob.Configure(options =>
                                 {
-                                    options.ConnectionString = TestDefaultConfiguration.EventHubConnectionString;
+                                    options.ConfigureTestDefaults();
                                     options.ConsumerGroup = EHConsumerGroup;
                                     options.Path = EHPath;
                                 }));

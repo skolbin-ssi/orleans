@@ -1,14 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using Orleans.Internal;
 
 namespace Orleans.Runtime
 {
-
-    internal class Watchdog : DedicatedAsynchAgent
+    internal class Watchdog
     {
+        private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
         private static readonly TimeSpan heartbeatPeriod = TimeSpan.FromMilliseconds(1000);
         private readonly TimeSpan healthCheckPeriod;
         private DateTime lastHeartbeat;
@@ -17,32 +18,43 @@ namespace Orleans.Runtime
         private readonly ILogger logger;
         private readonly CounterStatistic watchdogChecks;
         private CounterStatistic watchdogFailedChecks;
+        private Thread thread;
 
-        public Watchdog(TimeSpan watchdogPeriod, List<IHealthCheckParticipant> watchables, ExecutorService executorService, ILoggerFactory loggerFactory)
-            :base(executorService, loggerFactory)
+        public Watchdog(TimeSpan watchdogPeriod, List<IHealthCheckParticipant> watchables, ILogger<Watchdog> logger)
         {
-            logger = loggerFactory.CreateLogger<Watchdog>();
+            this.logger = logger;
             healthCheckPeriod = watchdogPeriod;
             participants = watchables;
             watchdogChecks = CounterStatistic.FindOrCreate(StatisticNames.WATCHDOG_NUM_HEALTH_CHECKS);
         }
 
-        public override void Start()
+        public void Start()
         {
             logger.Info("Starting Silo Watchdog.");
             var now = DateTime.UtcNow;
             lastHeartbeat = now;
             lastWatchdogCheck = now;
-            base.Start();
+            if (thread is object) throw new InvalidOperationException("Watchdog.Start may not be called more than once");
+            this.thread = new Thread(this.Run)
+            {
+                IsBackground = true,
+                Name = "Orleans.Runtime.Watchdog",
+            };
+            this.thread.Start();
         }
 
-        protected override void Run()
+        public void Stop()
         {
-            while (!Cts.IsCancellationRequested)
+            cancellation.Cancel();
+        }
+
+        protected void Run()
+        {
+            while (!this.cancellation.IsCancellationRequested)
             {
                 try
                 {
-                    WatchdogHeartbeatTick(null);
+                    WatchdogHeartbeatTick();
                     Thread.Sleep(heartbeatPeriod);
                 }
                 catch (ThreadAbortException)
@@ -51,12 +63,12 @@ namespace Orleans.Runtime
                 }
                 catch (Exception exc)
                 {
-                    logger.Error(ErrorCode.Watchdog_InternalError, "Watchdog Internal Error.", exc);
+                    logger.LogError((int)ErrorCode.Watchdog_InternalError, exc, "Watchdog encountered an internal error");
                 }
             }
         }
 
-        private void WatchdogHeartbeatTick(object state)
+        private void WatchdogHeartbeatTick()
         {
             try
             {
@@ -72,18 +84,31 @@ namespace Orleans.Runtime
 
             watchdogChecks.Increment();
             int numFailedChecks = 0;
+            StringBuilder reasons = null;
             foreach (IHealthCheckParticipant participant in participants)
             {
                 try
                 {
-                    bool ok = participant.CheckHealth(lastWatchdogCheck);
+                    bool ok = participant.CheckHealth(lastWatchdogCheck, out var reason);
                     if (!ok)
+                    {
+                        reasons ??= new StringBuilder();
+                        if (reasons.Length > 0)
+                        {
+                            reasons.Append(" ");
+                        }
+
+                        reasons.Append($"{participant.GetType()} failed health check with reason \"{reason}\".");
                         numFailedChecks++;
+                    }
                 }
                 catch (Exception exc) 
                 {
-                    logger.Warn(ErrorCode.Watchdog_ParticipantThrownException, 
-                        String.Format("HealthCheckParticipant {0} has thrown an exception from its CheckHealth method.", participant.ToString()), exc); 
+                    logger.LogWarning(
+                        (int)ErrorCode.Watchdog_ParticipantThrownException,
+                        exc,
+                        "Health check participant {Participant} has thrown an exception from its CheckHealth method.",
+                        participant?.GetType());
                 }
             }
             if (numFailedChecks > 0)
@@ -92,7 +117,7 @@ namespace Orleans.Runtime
                     watchdogFailedChecks = CounterStatistic.FindOrCreate(StatisticNames.WATCHDOG_NUM_FAILED_HEALTH_CHECKS);
                 
                 watchdogFailedChecks.Increment();
-                logger.Warn(ErrorCode.Watchdog_HealthCheckFailure, String.Format("Watchdog had {0} Health Check Failure(s) out of {1} Health Check Participants.", numFailedChecks, participants.Count)); 
+                logger.LogWarning((int)ErrorCode.Watchdog_HealthCheckFailure, "Watchdog had {FailedChecks} health Check failure(s) out of {ParticipantCount} health Check participants: {Reasons}", numFailedChecks, participants.Count, reasons.ToString()); 
             }
             lastWatchdogCheck = DateTime.UtcNow;
         }
@@ -103,8 +128,9 @@ namespace Orleans.Runtime
             if (timeSinceLastTick > heartbeatPeriod.Multiply(2))
             {
                 var gc = new[] { GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2) };
-                logger.Warn(ErrorCode.SiloHeartbeatTimerStalled,
-                    ".NET Runtime Platform stalled for {0} - possibly GC? We are now using total of {1}MB memory. gc={2}, {3}, {4}",
+                logger.LogWarning(
+                    (int)ErrorCode.SiloHeartbeatTimerStalled,
+                    ".NET Runtime Platform stalled for {TimeSinceLastTick} - possibly GC? We are now using total of {TotalMemory}MB memory. gc={GCGen0Count}, {GCGen1Count}, {GCGen2Count}",
                     timeSinceLastTick,
                     GC.GetTotalMemory(false) / (1024 * 1024),
                     gc[0],

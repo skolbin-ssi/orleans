@@ -8,6 +8,7 @@ using Xunit;
 using Xunit.Abstractions;
 using System.Linq;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace UnitTests.StreamingTests
 {
@@ -31,19 +32,41 @@ namespace UnitTests.StreamingTests
 
         internal static IStreamPubSub GetStreamPubSub(IInternalClusterClient client)
         {
-            return client.StreamProviderRuntime.PubSub(StreamPubSubType.ExplicitGrainBasedAndImplicit);
+            var runtime = client.ServiceProvider.GetRequiredService<IStreamProviderRuntime>();
+            return runtime.PubSub(StreamPubSubType.ExplicitGrainBasedAndImplicit);
         }
 
-        internal static async Task CheckPubSubCounts(IInternalClusterClient client, ITestOutputHelper output, string when, int expectedPublisherCount, int expectedConsumerCount, Guid streamId, string streamProviderName, string streamNamespace)
+        internal static async Task CheckPubSubCounts(IInternalClusterClient client, ITestOutputHelper output, string when, int expectedPublisherCount, int expectedConsumerCount, Guid streamIdGuid, string streamProviderName, string streamNamespace)
         {
             var pubSub = GetStreamPubSub(client);
+            var streamId = new InternalStreamId(streamProviderName, StreamId.Create(streamNamespace, streamIdGuid));
+            var totalWait = TimeSpan.Zero;
 
-            int consumerCount = await pubSub.ConsumerCount(streamId, streamProviderName, streamNamespace);
+            int consumerCount;
+            while ((consumerCount = await pubSub.ConsumerCount(streamId)) != expectedConsumerCount)
+            {
+                await Task.Delay(1000);
+                totalWait += TimeSpan.FromMilliseconds(1000);
+                if (totalWait > TimeSpan.FromMilliseconds(5000))
+                {
+                    break;
+                }
+            }
 
             Assert_AreEqual(output, expectedConsumerCount, consumerCount, "{0} - ConsumerCount for stream {1} = {2}",
                 when, streamId, consumerCount);
 
-            int publisherCount = await pubSub.ProducerCount(streamId, streamProviderName, streamNamespace);
+            int publisherCount;
+            totalWait = TimeSpan.Zero;
+            while ((publisherCount = await pubSub.ProducerCount(streamId)) != expectedPublisherCount)
+            {
+                await Task.Delay(1000);
+                totalWait += TimeSpan.FromMilliseconds(1000);
+                if (totalWait > TimeSpan.FromMilliseconds(5000))
+                {
+                    break;
+                }
+            }
 
             Assert_AreEqual(output, expectedPublisherCount, publisherCount, "{0} - PublisherCount for stream {1} = {2}",
                 when, streamId, publisherCount);

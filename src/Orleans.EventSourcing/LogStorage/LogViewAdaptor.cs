@@ -1,15 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Orleans;
-using Orleans.LogConsistency;
 using Orleans.Storage;
 using Orleans.EventSourcing.Common;
-using Orleans.Runtime;
 
 namespace Orleans.EventSourcing.LogStorage
 {
@@ -210,17 +206,6 @@ namespace Orleans.EventSourcing.LogStorage
                     batchsuccessfullywritten = true;
                 }
             }
-
-
-            // broadcast notifications to all other clusters
-            if (batchsuccessfullywritten)
-                BroadcastNotification(new UpdateNotificationMessage()
-                   {
-                       Version = GlobalLog.StateAndMetaData.GlobalVersion,
-                       Updates = updates.Select(se => se.Entry).ToList(),
-                       Origin = Services.MyClusterId,
-                       ETag = GlobalLog.ETag
-                   });
 
             exit_operation("WriteAsync");
 

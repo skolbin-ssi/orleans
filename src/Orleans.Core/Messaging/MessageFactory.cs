@@ -1,5 +1,6 @@
 
 using System;
+using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using Orleans.CodeGeneration;
 using Orleans.Serialization;
@@ -31,7 +32,6 @@ namespace Orleans.Runtime
                 IsUnordered = (options & InvokeMethodOptions.Unordered) != 0,
                 IsAlwaysInterleave = (options & InvokeMethodOptions.AlwaysInterleave) != 0,
                 BodyObject = request,
-                IsUsingInterfaceVersions = request.InterfaceVersion > 0,
                 RequestContextData = RequestContextExtensions.Export(this.serializationManager)
             };
 
@@ -100,7 +100,7 @@ namespace Orleans.Runtime
                 TransactionInfo = request.TransactionInfo
             };
 
-            if (request.SendingGrain != null)
+            if (!request.SendingGrain.IsDefault)
             {
                 response.TargetGrain = request.SendingGrain;
                 if (request.SendingActivation != null)
@@ -110,22 +110,17 @@ namespace Orleans.Runtime
             }
 
             response.SendingSilo = request.TargetSilo;
-            if (request.TargetGrain != null)
+            if (!request.TargetGrain.IsDefault)
             {
                 response.SendingGrain = request.TargetGrain;
                 if (request.TargetActivation != null)
                 {
                     response.SendingActivation = request.TargetActivation;
                 }
-                else if (request.TargetGrain.IsSystemTarget)
+                else if (request.TargetGrain.IsSystemTarget())
                 {
-                    response.SendingActivation = ActivationId.GetSystemActivation(request.TargetGrain, request.TargetSilo);
+                    response.SendingActivation = ActivationId.GetDeterministic(request.TargetGrain);
                 }
-            }
-
-            if (request.DebugContext != null)
-            {
-                response.DebugContext = request.DebugContext;
             }
 
             response.CacheInvalidationHeader = request.CacheInvalidationHeader;
@@ -149,6 +144,17 @@ namespace Orleans.Runtime
             response.RejectionInfo = info;
             response.BodyObject = ex;
             if (this.logger.IsEnabled(LogLevel.Debug)) this.logger.Debug("Creating {0} rejection with info '{1}' for {2} at:" + Environment.NewLine + "{3}", type, info, this, Utils.GetStackTrace());
+            return response;
+        }
+
+        internal Message CreateDiagnosticResponseMessage(Message request, bool isExecuting, bool isWaiting, List<string> diagnostics)
+        {
+            var response = this.CreateResponseMessage(request);
+            response.Result = Message.ResponseTypes.Status;
+            response.BodyObject = new StatusResponse(isExecuting, isWaiting, diagnostics);
+
+            if (this.logger.IsEnabled(LogLevel.Debug)) this.logger.LogDebug("Creating {RequestMesssage} status update with diagnostics {Diagnostics}", request, diagnostics);
+
             return response;
         }
     }

@@ -20,7 +20,7 @@ namespace Orleans.Connections.Security
         }
 
         public DuplexPipeStreamAdapter(IDuplexPipe duplexPipe, StreamPipeReaderOptions readerOptions, StreamPipeWriterOptions writerOptions, Func<Stream, TStream> createStream) :
-            base(duplexPipe.Input, duplexPipe.Output)
+            base(duplexPipe)
         {
             var stream = createStream(this);
             Stream = stream;
@@ -51,7 +51,20 @@ namespace Orleans.Connections.Security
 
         protected override void Dispose(bool disposing)
         {
-            throw new NotSupportedException();
+            lock (_disposeLock)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+                _disposed = true;
+            }
+
+            if (disposing)
+            {
+                Input.Complete();
+                Output.Complete();
+            }
         }
     }
 }

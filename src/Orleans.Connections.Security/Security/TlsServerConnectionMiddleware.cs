@@ -1,9 +1,6 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.IO.Pipelines;
 using System.Net.Security;
-using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
@@ -81,16 +78,16 @@ namespace Orleans.Connections.Security
                 leaveOpen: true
             );
 
-            SslDuplexPipe sslDuplexPipe = null;
+            TlsDuplexPipe tlsDuplexPipe = null;
 
             if (_options.RemoteCertificateMode == RemoteCertificateMode.NoCertificate)
             {
-                sslDuplexPipe = new SslDuplexPipe(context.Transport, inputPipeOptions, outputPipeOptions);
+                tlsDuplexPipe = new TlsDuplexPipe(context.Transport, inputPipeOptions, outputPipeOptions);
                 certificateRequired = false;
             }
             else
             {
-                sslDuplexPipe = new SslDuplexPipe(context.Transport, inputPipeOptions, outputPipeOptions, s => new SslStream(
+                tlsDuplexPipe = new TlsDuplexPipe(context.Transport, inputPipeOptions, outputPipeOptions, s => new SslStream(
                     s,
                     leaveInnerStreamOpen: false,
                     userCertificateValidationCallback: (sender, certificate, chain, sslPolicyErrors) =>
@@ -128,7 +125,7 @@ namespace Orleans.Connections.Security
                 certificateRequired = true;
             }
 
-            var sslStream = sslDuplexPipe.Stream;
+            var sslStream = tlsDuplexPipe.Stream;
 
             using (var cancellationTokeSource = new CancellationTokenSource(_options.HandshakeTimeout))
             using (cancellationTokeSource.Token.UnsafeRegister(state => ((ConnectionContext)state).Abort(), context))
@@ -147,39 +144,40 @@ namespace Orleans.Connections.Security
                             {
                                 EnsureCertificateIsAllowedForServerAuth(cert);
                             }
+
                             return cert;
                         };
                     }
 
-                    var sslOptions = new SslServerAuthenticationOptions
+                    var sslOptions = new TlsServerAuthenticationOptions
                     {
                         ServerCertificate = _certificate,
                         ServerCertificateSelectionCallback = selector,
                         ClientCertificateRequired = certificateRequired,
                         EnabledSslProtocols = _options.SslProtocols,
                         CertificateRevocationCheckMode = _options.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
-                        ApplicationProtocols = new List<SslApplicationProtocol>()
                     };
 
                     _options.OnAuthenticateAsServer?.Invoke(context, sslOptions);
 
-                    await sslStream.AuthenticateAsServerAsync(sslOptions, CancellationToken.None);
+                    await sslStream.AuthenticateAsServerAsync(sslOptions.Value, cancellationTokeSource.Token);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException ex)
                 {
-                    _logger?.LogDebug(2, "Authentication timed out");
+                    _logger?.LogWarning(2, ex, "Authentication timed out");
                     await sslStream.DisposeAsync();
                     return;
                 }
-                catch (Exception ex) when (ex is IOException || ex is AuthenticationException)
+                catch (Exception ex)
                 {
-                    _logger?.LogDebug(1, ex, "Authentication failed");
+                    _logger?.LogWarning(1, ex, "Authentication failed");
                     await sslStream.DisposeAsync();
                     return;
                 }
             }
 
             feature.ApplicationProtocol = sslStream.NegotiatedApplicationProtocol.Protocol;
+
             context.Features.Set<ITlsApplicationProtocolFeature>(feature);
             feature.LocalCertificate = ConvertToX509Certificate2(sslStream.LocalCertificate);
             feature.RemoteCertificate = ConvertToX509Certificate2(sslStream.RemoteCertificate);
@@ -195,14 +193,14 @@ namespace Orleans.Connections.Security
 
             try
             {
-                context.Transport = sslDuplexPipe;
+                context.Transport = tlsDuplexPipe;
 
-                // Disposing the stream will dispose the sslDuplexPipe
+                // Disposing the stream will dispose the TlsDuplexPipe
                 await using (sslStream)
-                await using (sslDuplexPipe)
+                await using (tlsDuplexPipe)
                 {
                     await _next(context);
-                    // Dispose the inner stream (SslDuplexPipe) before disposing the SslStream
+                    // Dispose the inner stream (TlsDuplexPipe) before disposing the SslStream
                     // as the duplex pipe can hit an ODE as it still may be writing.
                 }
             }

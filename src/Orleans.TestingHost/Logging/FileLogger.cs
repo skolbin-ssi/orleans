@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -11,21 +12,37 @@ namespace Orleans.TestingHost.Logging
     /// <summary>
     /// The log output which all <see cref="FileLogger"/> share to log messages to 
     /// </summary>
-    public class FileLoggingOutput
+    public class FileLoggingOutput : IDisposable
     {
+        private static readonly ConcurrentDictionary<FileLoggingOutput, object> Instances = new();
         private readonly TimeSpan flushInterval = Debugger.IsAttached ? TimeSpan.FromMilliseconds(10) : TimeSpan.FromSeconds(1);
+        private readonly object lockObj = new object();
+        private readonly string logFileName;
         private DateTime lastFlush = DateTime.UtcNow;
         private StreamWriter logOutput;
-        private readonly object lockObj = new object();
-        private string logFileName;
+
+        static FileLoggingOutput()
+        {
+            AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
+
+            static void CurrentDomain_ProcessExit(object sender, EventArgs args)
+            {
+                foreach (var instance in Instances)
+                {
+                    instance.Key.Dispose();
+                }
+            }
+        }
+
         /// <summary>
         /// Constructor
         /// </summary>
         /// <param name="fileName"></param>
         public FileLoggingOutput(string fileName)
         {
-            logOutput = new StreamWriter(File.Open(fileName, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), Encoding.UTF8);
             this.logFileName = fileName;
+            logOutput = new StreamWriter(File.Open(fileName, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), Encoding.UTF8);
+            Instances[this] = null;
         }
 
         /// <summary>
@@ -80,24 +97,25 @@ namespace Orleans.TestingHost.Logging
             return msg;
         }
 
-        /// <summary>
-        /// Close the output
-        /// </summary>
-        public void Close()
+        public void Dispose()
         {
-            if (this.logOutput == null) return; // was already closed.
+            Dispose(true);
+        }
 
+        private void Dispose(bool disposing)
+        {
             try
             {
                 lock (this.lockObj)
                 {
-                    if (this.logOutput == null) // was already closed.
+                    if (this.logOutput is StreamWriter output)
                     {
-                        return;
+                        this.logOutput = null;
+                        _ = Instances.TryRemove(this, out _);
+
+                        // Dispose the output, which will flush all buffers.
+                        output.Dispose();
                     }
-                    this.logOutput.Flush();
-                    this.logOutput.Dispose();
-                    this.logOutput = null;
                 }
             }
             catch (Exception exc)
@@ -105,11 +123,6 @@ namespace Orleans.TestingHost.Logging
                 var msg = string.Format("Ignoring error closing log file {0} - {1}", this.logFileName,
                     LogFormatter.PrintException(exc));
                 Console.WriteLine(msg);
-            }
-            finally
-            {
-                this.logOutput = null;
-                this.logFileName = null;
             }
         }
     }

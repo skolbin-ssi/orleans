@@ -9,7 +9,7 @@ using Orleans.Hosting;
 
 namespace Orleans.Runtime.Messaging
 {
-    internal sealed class SiloConnectionListener : ConnectionListener, ILifecycleParticipant<ISiloLifecycle>
+    internal sealed class SiloConnectionListener : ConnectionListener, ILifecycleParticipant<ISiloLifecycle>, ILifecycleObserver
     {
         internal static readonly object ServicesKey = new object();
         private readonly ILocalSiloDetails localSiloDetails;
@@ -18,6 +18,7 @@ namespace Orleans.Runtime.Messaging
         private readonly EndpointOptions endpointOptions;
         private readonly ConnectionManager connectionManager;
         private readonly ConnectionCommon connectionShared;
+        private readonly ProbeRequestMonitor probeRequestMonitor;
 
         public SiloConnectionListener(
             IServiceProvider serviceProvider,
@@ -27,7 +28,8 @@ namespace Orleans.Runtime.Messaging
             IOptions<EndpointOptions> endpointOptions,
             ILocalSiloDetails localSiloDetails,
             ConnectionManager connectionManager,
-            ConnectionCommon connectionShared)
+            ConnectionCommon connectionShared,
+            ProbeRequestMonitor probeRequestMonitor)
             : base(serviceProvider.GetRequiredServiceByKey<object, IConnectionListenerFactory>(ServicesKey), connectionOptions, connectionManager, connectionShared)
         {
             this.siloConnectionOptions = siloConnectionOptions.Value;
@@ -35,6 +37,7 @@ namespace Orleans.Runtime.Messaging
             this.localSiloDetails = localSiloDetails;
             this.connectionManager = connectionManager;
             this.connectionShared = connectionShared;
+            this.probeRequestMonitor = probeRequestMonitor;
             this.endpointOptions = endpointOptions.Value;
         }
 
@@ -50,7 +53,8 @@ namespace Orleans.Runtime.Messaging
                 this.localSiloDetails,
                 this.connectionManager,
                 this.ConnectionOptions,
-                this.connectionShared);
+                this.connectionShared,
+                this.probeRequestMonitor);
         }
 
         protected override void ConfigureConnectionBuilder(IConnectionBuilder connectionBuilder)
@@ -64,20 +68,16 @@ namespace Orleans.Runtime.Messaging
         {
             if (this.Endpoint is null) return;
 
-            lifecycle.Subscribe(nameof(SiloConnectionListener), ServiceLifecycleStage.RuntimeInitialize, this.OnRuntimeInitializeStart, this.OnRuntimeInitializeStop);
+            lifecycle.Subscribe(nameof(SiloConnectionListener), ServiceLifecycleStage.RuntimeInitialize - 1, this);
         }
 
-        private async Task OnRuntimeInitializeStart(CancellationToken cancellationToken)
+        Task ILifecycleObserver.OnStart(CancellationToken ct) => Task.Run(async () =>
         {
-            await Task.Run(() => this.BindAsync(cancellationToken));
-
+            await BindAsync();
             // Start accepting connections immediately.
-            await Task.Run(() => this.Start());
-        }
+            Start();
+        });
 
-        private async Task OnRuntimeInitializeStop(CancellationToken cancellationToken)
-        {
-            await Task.Run(() => this.StopAsync(cancellationToken));
-        }
+        Task ILifecycleObserver.OnStop(CancellationToken ct) => Task.Run(() => StopAsync(ct));
     }
 }

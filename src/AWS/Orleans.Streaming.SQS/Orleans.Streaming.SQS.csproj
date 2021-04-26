@@ -5,11 +5,6 @@
     <Description>Microsoft Orleans streaming provider for AWS SQS</Description>
     <PackageTags>$(PackageTags) AWS SQS</PackageTags>
     <TargetFrameworks>$(StandardTargetFrameworks)</TargetFrameworks>
-  </PropertyGroup>
-
-  <PropertyGroup>
-    <AssemblyName>Orleans.Streaming.SQS</AssemblyName>
-    <RootNamespace>Orleans.Streaming.SQS</RootNamespace>
     <DefineConstants>$(DefineConstants);STREAMING_SQS</DefineConstants>
   </PropertyGroup>
 
@@ -20,5 +15,18 @@
   <ItemGroup>
     <PackageReference Include="AWSSDK.SQS" Version="$(AWSSDKSQSVersion)" />
   </ItemGroup>
+
+  <Choose>
+    <When Condition="$(OrleansStreamingVersion) == $(VersionPrefix) AND $(OrleansStreamingVersion) == $(OrleansAWSVersion)">
+      <ItemGroup>
+        <ProjectReference Include="$(SourceRoot)src\Orleans.Streaming\Orleans.Streaming.csproj" />
+      </ItemGroup>
+    </When>
+    <Otherwise>
+      <ItemGroup>
+        <PackageReference Include="Microsoft.Orleans.Streaming" Version="$(OrleansStreamingVersion)"/>
+      </ItemGroup>
+    </Otherwise>
+  </Choose>
 
 </Project>

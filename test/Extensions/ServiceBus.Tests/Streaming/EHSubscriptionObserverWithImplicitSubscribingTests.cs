@@ -1,4 +1,6 @@
 using System;
+using Microsoft.Extensions.Configuration;
+using Orleans;
 using Orleans.Configuration;
 using Orleans.Hosting;
 using Orleans.Streams;
@@ -21,20 +23,21 @@ namespace ServiceBus.Tests.StreamingTests
         {
             protected override void ConfigureTestCluster(TestClusterBuilder builder)
             {
-                builder.AddSiloBuilderConfigurator<SiloConfigurator>();
+                builder.AddSiloBuilderConfigurator<TestClusterConfigurator>();
+                builder.AddClientBuilderConfigurator<TestClusterConfigurator>();
             }
         }
 
-        private class SiloConfigurator : ISiloBuilderConfigurator
+        private class TestClusterConfigurator : ISiloConfigurator, IClientBuilderConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder
                     .AddEventHubStreams(StreamProviderName, b =>
                     {
                         b.ConfigureEventHub(ob => ob.Configure(options =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.EventHubConnectionString;
+                            options.ConfigureTestDefaults();
                             options.ConsumerGroup = EHConsumerGroup;
                             options.Path = EHPath;
                         }));
@@ -51,7 +54,7 @@ namespace ServiceBus.Tests.StreamingTests
                     {
                         b.ConfigureEventHub(ob => ob.Configure(options =>
                         {
-                            options.ConnectionString = TestDefaultConfiguration.EventHubConnectionString;
+                            options.ConfigureTestDefaults();
                             options.ConsumerGroup = EHConsumerGroup;
                             options.Path = EHPath2;
 
@@ -67,6 +70,8 @@ namespace ServiceBus.Tests.StreamingTests
                 hostBuilder
                     .AddMemoryGrainStorage("PubSubStore");
             }
+
+            public void Configure(IConfiguration configuration, IClientBuilder clientBuilder) => clientBuilder.AddStreaming();
         }
 
         public EHSubscriptionObserverWithImplicitSubscribingTests(ITestOutputHelper output, Fixture fixture)

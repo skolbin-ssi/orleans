@@ -2,14 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Orleans.GrainDirectory;
 using Orleans.Runtime.Scheduler;
 
 
 namespace Orleans.Runtime.GrainDirectory
 {
-    internal class AdaptiveDirectoryCacheMaintainer : DedicatedAsynchAgent
+    internal class AdaptiveDirectoryCacheMaintainer : TaskSchedulerAgent
     {
         private static readonly TimeSpan SLEEP_TIME_BETWEEN_REFRESHES = Debugger.IsAttached ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(1); // this should be something like minTTL/4
 
@@ -24,9 +25,8 @@ namespace Orleans.Runtime.GrainDirectory
             LocalGrainDirectory router,
             AdaptiveGrainDirectoryCache cache,
             IInternalGrainFactory grainFactory,
-            ExecutorService executorService,
             ILoggerFactory loggerFactory)
-            :base(executorService, loggerFactory)
+            : base(loggerFactory)
         {
             this.grainFactory = grainFactory;
             this.router = router;
@@ -37,7 +37,7 @@ namespace Orleans.Runtime.GrainDirectory
             OnFault = FaultBehavior.RestartOnFault;
         }
 
-        protected override void Run()
+        protected override async Task Run()
         {
             while (router.Running)
             {
@@ -104,11 +104,11 @@ namespace Orleans.Runtime.GrainDirectory
                         else
                         {
                             // 3. If the entry is expired and was accessed in the last time interval, put into "fetch-batch-requests" list
-                            if (!fetchInBatchList.ContainsKey(owner))
+                            if (!fetchInBatchList.TryGetValue(owner, out var list))
                             {
-                                fetchInBatchList[owner] = new List<GrainId>();
+                                fetchInBatchList[owner] = list = new List<GrainId>();
                             }
-                            fetchInBatchList[owner].Add(grain);
+                            list.Add(grain);
                             // And reset the entry's access count for next time
                             entry.NumAccesses = 0;
                             cnt4++;                         // for debug
@@ -124,56 +124,55 @@ namespace Orleans.Runtime.GrainDirectory
                 ProduceStats();
 
                 // recheck every X seconds (Consider making it a configurable parameter)
-                Thread.Sleep(SLEEP_TIME_BETWEEN_REFRESHES);
+                await Task.Delay(SLEEP_TIME_BETWEEN_REFRESHES);
             }
         }
 
         private void SendBatchCacheRefreshRequests(Dictionary<SiloAddress, List<GrainId>> refreshRequests)
         {
-            foreach (SiloAddress silo in refreshRequests.Keys)
+            foreach (var kv in refreshRequests)
             {
-                List<Tuple<GrainId, int>> cachedGrainAndETagList = BuildGrainAndETagList(refreshRequests[silo]);
+                var cachedGrainAndETagList = BuildGrainAndETagList(kv.Value);
 
-                SiloAddress capture = silo;
+                var silo = kv.Key;
 
                 router.CacheValidationsSent.Increment();
                 // Send all of the items in one large request
-                var validator = this.grainFactory.GetSystemTarget<IRemoteGrainDirectory>(Constants.DirectoryCacheValidatorId, capture);
-                                
+                var validator = this.grainFactory.GetSystemTarget<IRemoteGrainDirectory>(Constants.DirectoryCacheValidatorType, silo);
+
                 router.Scheduler.QueueTask(async () =>
                 {
                     var response = await validator.LookUpMany(cachedGrainAndETagList);
-                    ProcessCacheRefreshResponse(capture, response);
-                }, router.CacheValidator.SchedulingContext).Ignore();
+                    ProcessCacheRefreshResponse(silo, response);
+                }, router.CacheValidator).Ignore();
 
-                if (Log.IsEnabled(LogLevel.Trace)) Log.Trace("Silo {0} is sending request to silo {1} with {2} entries", router.MyAddress, silo, cachedGrainAndETagList.Count);                
+                if (Log.IsEnabled(LogLevel.Trace)) Log.Trace("Silo {0} is sending request to silo {1} with {2} entries", router.MyAddress, silo, cachedGrainAndETagList.Count);
             }
         }
 
         private void ProcessCacheRefreshResponse(
             SiloAddress silo,
-            IReadOnlyCollection<Tuple<GrainId, int, List<ActivationAddress>>> refreshResponse)
+            List<AddressAndTag> refreshResponse)
         {
             if (Log.IsEnabled(LogLevel.Trace)) Log.Trace("Silo {0} received ProcessCacheRefreshResponse. #Response entries {1}.", router.MyAddress, refreshResponse.Count);
 
             int cnt1 = 0, cnt2 = 0, cnt3 = 0;
 
             // pass through returned results and update the cache if needed
-            foreach (Tuple<GrainId, int, List<ActivationAddress>> tuple in refreshResponse)
+            foreach (var tuple in refreshResponse)
             {
-                if (tuple.Item3 != null)
+                if (tuple.Address is { IsComplete: true })
                 {
                     // the server returned an updated entry
-                    var updated = tuple.Item3.Select(a => Tuple.Create(a.Silo, a.Activation)).ToList().AsReadOnly();
-                    cache.AddOrUpdate(tuple.Item1, updated, tuple.Item2);
+                    cache.AddOrUpdate(tuple.Address, tuple.VersionTag);
                     cnt1++;
                 }
-                else if (tuple.Item2 == -1)
+                else if (tuple.VersionTag == -1)
                 {
                     // The server indicates that it does not own the grain anymore.
                     // It could be that by now, the cache has been already updated and contains an entry received from another server (i.e., current owner for the grain).
                     // For simplicity, we do not care about this corner case and simply remove the cache entry.
-                    cache.Remove(tuple.Item1);
+                    cache.Remove(tuple.Address.Grain);
                     cnt2++;
                 }
                 else
@@ -183,13 +182,12 @@ namespace Orleans.Runtime.GrainDirectory
                     // Validate that the generation number in the request and the response are equal
                     // Contract.Assert(tuple.Item2 == refreshRequest.Find(o => o.Item1 == tuple.Item1).Item2);
                     // refresh the entry in the cache
-                    cache.MarkAsFresh(tuple.Item1);
+                    cache.MarkAsFresh(tuple.Address.Grain);
                     cnt3++;
                 }
             }
             if (Log.IsEnabled(LogLevel.Trace)) Log.Trace("Silo {0} processed refresh response from {1} with {2} updated, {3} removed, {4} unchanged grains", router.MyAddress, silo, cnt1, cnt2, cnt3);
         }
-
 
         /// <summary>
         /// Gets the list of grains (all owned by the same silo) and produces a new list
@@ -197,9 +195,9 @@ namespace Orleans.Runtime.GrainDirectory
         /// </summary>
         /// <param name="grains">List of grains owned by the same silo</param>
         /// <returns>List of grains in input along with their generation counters stored in the cache </returns>
-        private List<Tuple<GrainId, int>> BuildGrainAndETagList(IEnumerable<GrainId> grains)
+        private List<(GrainId, int)> BuildGrainAndETagList(List<GrainId> grains)
         {
-            var grainAndETagList = new List<Tuple<GrainId, int>>();
+            var grainAndETagList = new List<(GrainId, int)>();
 
             foreach (GrainId grain in grains)
             {
@@ -208,7 +206,7 @@ namespace Orleans.Runtime.GrainDirectory
 
                 if (entry != null)
                 {
-                    grainAndETagList.Add(new Tuple<GrainId, int>(grain, entry.ETag));
+                    grainAndETagList.Add((grain, entry.ETag));
                 }
                 else
                 {

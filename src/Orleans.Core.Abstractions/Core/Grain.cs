@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Orleans.Core;
 using Orleans.Runtime;
-using Orleans.Streams;
-using System.Diagnostics;
 
 namespace Orleans
 {
@@ -33,12 +32,12 @@ namespace Orleans
         /// <summary>
         /// Gets the IServiceProvider managed by the runtime. Null if this grain is not associated with a Runtime, such as when created directly for unit testing.
         /// </summary>
-        protected IServiceProvider ServiceProvider 
+        protected internal IServiceProvider ServiceProvider 
         {
-            get { return Data?.ServiceProvider ?? Runtime?.ServiceProvider; }
+            get { return Data?.ActivationServices ?? Runtime?.ServiceProvider; }
         }
 
-        internal IGrainIdentity Identity;
+        internal GrainId GrainId => this.Data.GrainId;
 
         /// <summary>
         /// This constructor should never be invoked. We expose it so that client code (subclasses of Grain) do not have to add a constructor.
@@ -46,6 +45,26 @@ namespace Orleans
         /// </summary>
         protected Grain()
         {
+            var context = RuntimeContext.CurrentGrainContext;
+            if (context is null)
+            {
+                return;
+            }
+
+            if (!(context is IActivationData data))
+            {
+                ThrowInvalidContext();
+                return;
+            }
+
+            this.Data = data;
+            this.Runtime = data.Runtime;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void ThrowInvalidContext()
+        {
+            throw new InvalidOperationException("Current execution context is not suitable for use with Grain");
         }
 
         /// <summary>
@@ -53,20 +72,15 @@ namespace Orleans
         /// This constructor is particularly useful for unit testing where test code can create a Grain and replace
         /// the IGrainIdentity and IGrainRuntime with test doubles (mocks/stubs).
         /// </summary>
-        protected Grain(IGrainIdentity identity, IGrainRuntime runtime)
+        protected Grain(IGrainRuntime runtime) : this()
         {
-            Identity = identity;
             Runtime = runtime;
         }
 
-        
         /// <summary>
         /// String representation of grain's SiloIdentity including type and primary key.
         /// </summary>
-        public string IdentityString
-        {
-            get { return Identity?.IdentityString ?? string.Empty; }
-        }
+        public string IdentityString => this.GrainId.ToString();
 
         /// <summary>
         /// A unique identifier for the current silo.
@@ -75,11 +89,6 @@ namespace Orleans
         public string RuntimeIdentity
         {
             get { return Runtime?.SiloIdentity ?? string.Empty; }
-        }
-
-        internal SiloAddress SiloAddress
-        {
-            get { return Runtime?.SiloAddress ?? SiloAddress.Zero; }
         }
 
         /// <summary>
@@ -179,15 +188,6 @@ namespace Orleans
             return Runtime.ReminderRegistry.GetReminders();
         }
 
-        protected IStreamProvider GetStreamProvider(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name))
-                throw new ArgumentNullException(nameof(name));
-                
-            EnsureRuntime();
-            return this.ServiceProvider.GetRequiredServiceByName<IStreamProvider>(name);
-        }
-
         /// <summary>
         /// Deactivate this activation of the grain after the current grain method call is completed.
         /// This call will mark this activation of the current grain to be deactivated and removed at the end of the current method.
@@ -248,7 +248,7 @@ namespace Orleans
     /// Base class for a Grain with declared persistent state.
     /// </summary>
     /// <typeparam name="TGrainState">The class of the persistent state object</typeparam>
-    public class Grain<TGrainState> : Grain where TGrainState : new()
+    public class Grain<TGrainState> : Grain
     {
         private IStorage<TGrainState> storage;
 
@@ -265,8 +265,7 @@ namespace Orleans
         /// This constructor is particularly useful for unit testing where test code can create a Grain and replace
         /// the IGrainIdentity, IGrainRuntime and State with test doubles (mocks/stubs).
         /// </summary>
-        protected Grain(IGrainIdentity identity, IGrainRuntime runtime, IStorage<TGrainState> storage)
-            : base(identity, runtime)
+        protected Grain(IStorage<TGrainState> storage)
         {
             this.storage = storage;
         }

@@ -30,6 +30,11 @@ namespace Orleans.Runtime.Counters
             logStatistics.Start();
         }
 
+        public void Dump()
+        {
+            logStatistics?.DumpCounters();
+        }
+
         internal void Stop()
         {
             if (countersPublisher != null)

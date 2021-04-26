@@ -1,11 +1,7 @@
-﻿using Orleans.Concurrency;
 using Orleans.EventSourcing;
-using Orleans.MultiCluster;
 using Orleans.Providers;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using TestGrainInterfaces;
 
@@ -96,19 +92,6 @@ namespace TestGrains
     /// (so it does not do true event sourcing). 
     [LogConsistencyProvider(ProviderName = "StateStorage")]
     public class AccountGrain_PersistStateOnly : AccountGrain
-    {
-    }
-
-
-    /// A variant of the account grain that uses one instance per cluster
-    [OneInstancePerCluster]
-    public class AccountGrain_OneInstancePerCluster : AccountGrain
-    {
-    }
-
-    /// A variant of the account grain that uses a single global instance
-    [GlobalSingleInstance]
-    public class AccountGrain_SingleGlobalInstance : AccountGrain
     {
     }
 }

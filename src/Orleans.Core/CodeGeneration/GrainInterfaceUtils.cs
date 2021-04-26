@@ -5,39 +5,14 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Threading.Tasks;
-using Orleans.Concurrency;
 using Orleans.Runtime;
-using Orleans.Transactions;
 using Orleans.Utilities;
 
 namespace Orleans.CodeGeneration
 {
     internal static class GrainInterfaceUtils
     {
-        private static readonly IEqualityComparer<MethodInfo> MethodComparer = new MethodInfoComparer();
-
-        [Serializable]
-        internal class RulesViolationException : ArgumentException
-        {
-            public RulesViolationException(string message, List<string> violations)
-                : base(message)
-            {
-                Violations = violations;
-            }
-
-            protected RulesViolationException(SerializationInfo info, StreamingContext context) : base(info, context)
-            {
-                this.Violations = info.GetValue(nameof(Violations), typeof(List<string>)) as List<string>;
-            }
-
-            public override void GetObjectData(SerializationInfo info, StreamingContext context)
-            {
-                base.GetObjectData(info, context);
-                info.AddValue(nameof(Violations), this.Violations);
-            }
-
-            public List<string> Violations { get; private set; }
-        }
+        private static readonly MethodInfoComparer MethodComparer = new MethodInfoComparer();
 
         public static bool IsGrainInterface(Type t)
         {
@@ -58,7 +33,7 @@ namespace Orleans.CodeGeneration
         {
             var methodInfos = new List<MethodInfo>();
             GetMethodsImpl(grainType, grainType, methodInfos);
-            var flags = BindingFlags.Public | BindingFlags.InvokeMethod | BindingFlags.Instance;
+            var flags = BindingFlags.Public | BindingFlags.Instance;
             if (!bAllMethods)
                 flags |= BindingFlags.DeclaredOnly;
 
@@ -70,90 +45,20 @@ namespace Orleans.CodeGeneration
             return methodInfos.ToArray();
         }
 
-        public static string GetParameterName(ParameterInfo info)
+        public static List<Type> GetRemoteInterfaces(Type type, bool checkIsGrainInterface = true)
         {
-            var n = info.Name;
-            return string.IsNullOrEmpty(n) ? "arg" + info.Position : n;
-        }
-
-        public static bool IsTaskType(Type t)
-        {
-            if (t == typeof(Task))
-            {
-                return true;
-            }
-
-            if (t.IsGenericType)
-            {
-                var typeName = t.GetGenericTypeDefinition().FullName;
-                return typeName == "System.Threading.Tasks.Task`1" 
-                       || typeName == "System.Threading.Tasks.ValueTask`1";
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Whether method is read-only, i.e. does not modify grain state, 
-        /// a method marked with [ReadOnly].
-        /// </summary>
-        /// <param name="info"></param>
-        /// <returns></returns>
-        public static bool IsReadOnly(MethodInfo info)
-        {
-            return info.GetCustomAttributes(typeof (ReadOnlyAttribute), true).Any();
-        }
-
-        public static bool IsAlwaysInterleave(MethodInfo methodInfo)
-        {
-            return methodInfo.GetCustomAttributes(typeof (AlwaysInterleaveAttribute), true).Any();
-        }
-
-        public static bool IsUnordered(MethodInfo methodInfo)
-        {
-            var declaringType = methodInfo.DeclaringType;
-            return declaringType.GetCustomAttributes(typeof(UnorderedAttribute), true).Any() 
-                || (declaringType.GetInterfaces().Any(
-                    i => i.GetCustomAttributes(typeof(UnorderedAttribute), true).Any() 
-                        && declaringType.GetTypeInfo().GetRuntimeInterfaceMap(i).TargetMethods.Contains(methodInfo)))
-                || IsStatelessWorker(methodInfo);
-        }
-
-        public static bool IsStatelessWorker(MethodInfo methodInfo)
-        {
-            var declaringType = methodInfo.DeclaringType;
-            return declaringType.GetCustomAttributes(typeof(StatelessWorkerAttribute), true).Any() ||
-                (declaringType.GetInterfaces().Any(
-                    i => i.GetCustomAttributes(typeof(StatelessWorkerAttribute), true).Any()
-                        && declaringType.GetTypeInfo().GetRuntimeInterfaceMap(i).TargetMethods.Contains(methodInfo)));
-        }
-
-        public static bool TryGetTransactionOption(MethodInfo methodInfo, out TransactionOption option)
-        {
-            option = TransactionOption.Suppress;
-            TransactionAttribute transactionAttribute = methodInfo.GetCustomAttribute<TransactionAttribute>(true);
-            if (transactionAttribute != null)
-            {
-                option = transactionAttribute.Requirement;
-                return true;
-            }
-            return false;
-        }
-
-        public static Dictionary<int, Type> GetRemoteInterfaces(Type type, bool checkIsGrainInterface = true)
-        {
-            var dict = new Dictionary<int, Type>();
+            var res = new List<Type>();
 
             if (IsGrainInterface(type))
-                dict.Add(GetGrainInterfaceId(type), type);
-            
-            Type[] interfaces = type.GetInterfaces();
-            foreach (Type interfaceType in interfaces.Where(i => !checkIsGrainInterface || IsGrainInterface(i)))
-                dict.Add(GetGrainInterfaceId(interfaceType), interfaceType);
+                res.Add(type);
 
-            return dict;
+            foreach (var interfaceType in type.GetInterfaces())
+                if (!checkIsGrainInterface || IsGrainInterface(interfaceType))
+                    res.Add(interfaceType);
+
+            return res;
         }
-        
+
         public static int ComputeMethodId(MethodInfo methodInfo)
         {
             var attr = methodInfo.GetCustomAttribute<MethodIdAttribute>(true);
@@ -211,169 +116,21 @@ namespace Orleans.CodeGeneration
             return GetTypeCode(grainInterface);
         }
 
-        public static ushort GetGrainInterfaceVersion(Type grainInterface)
-        {
-            if (typeof(IGrainExtension).IsAssignableFrom(grainInterface))
-                return 0;
-
-            var attr = grainInterface.GetCustomAttribute<VersionAttribute>();
-            return attr?.Version ?? Constants.DefaultInterfaceVersion;
-        }
-
-        public static bool IsTaskBasedInterface(Type type)
-        {
-            var methods = type.GetMethods();
-            // An interface is task-based if it has at least one method that returns a Task or at least one parent that's task-based.
-            return methods.Any(m => IsTaskType(m.ReturnType)) || type.GetInterfaces().Any(IsTaskBasedInterface);
-        }
-
-        public static bool IsGrainType(Type grainType)
-        {
-            return typeof (IGrain).IsAssignableFrom(grainType);
-        }
-
         public static int GetGrainClassTypeCode(Type grainClass)
         {
             return GetTypeCode(grainClass);
         }
 
-        internal static bool TryValidateInterfaceRules(Type type, out List<string> violations)
-        {
-            violations = new List<string>();
-
-            bool success = ValidateInterfaceMethods(type, violations);
-            return success && ValidateInterfaceProperties(type, violations);
-        }
-
-        internal static void ValidateInterfaceRules(Type type)
-        {
-            List<string> violations;
-            if (!TryValidateInterfaceRules(type, out violations))
-            {
-                if (ConsoleText.IsConsoleAvailable)
-                {
-                    foreach (var violation in violations)
-                        ConsoleText.WriteLine("ERROR: " + violation);
-                }
-
-                throw new RulesViolationException(
-                    string.Format("{0} does not conform to the grain interface rules.", type.FullName), violations);
-            }
-        }
-
-        internal static void ValidateInterface(Type type)
-        {
-            if (!IsGrainInterface(type))
-                throw new ArgumentException(String.Format("{0} is not a grain interface", type.FullName));
-
-            ValidateInterfaceRules(type);
-        }
-
-        private static bool ValidateInterfaceMethods(Type type, List<string> violations)
-        {
-            bool success = true;
-
-            MethodInfo[] methods = type.GetMethods();
-            foreach (MethodInfo method in methods)
-            {
-                if (method.IsSpecialName)
-                    continue;
-
-                if (IsPureObserverInterface(method.DeclaringType))
-                {
-                    if (method.ReturnType != typeof (void))
-                    {
-                        success = false;
-                        violations.Add(String.Format("Method {0}.{1} must return void because it is defined within an observer interface.",
-                            type.FullName, method.Name));
-                    }
-                }
-                else if (!IsTaskType(method.ReturnType))
-                {
-                    success = false;
-                    violations.Add(String.Format("Method {0}.{1} must return Task or Task<T> because it is defined within a grain interface.",
-                        type.FullName, method.Name));
-                }
-
-                ParameterInfo[] parameters = method.GetParameters();
-                foreach (ParameterInfo parameter in parameters)
-                {
-                    if (parameter.IsOut)
-                    {
-                        success = false;
-                        violations.Add(String.Format("Argument {0} of method {1}.{2} is an output parameter. Output parameters are not allowed in grain interfaces.",
-                            GetParameterName(parameter), type.FullName, method.Name));
-                    }
-
-                    if (parameter.ParameterType.IsByRef)
-                    {
-                        success = false;
-                        violations.Add(String.Format("Argument {0} of method {1}.{2} is an a reference parameter. Reference parameters are not allowed.",
-                            GetParameterName(parameter), type.FullName, method.Name));
-                    }
-                }
-            }
-
-            return success;
-        }
-
-        private static bool ValidateInterfaceProperties(Type type, List<string> violations)
-        {
-            bool success = true;
-
-            PropertyInfo[] properties = type.GetProperties();
-            foreach (PropertyInfo property in properties)
-            {
-                success = false;
-                violations.Add(String.Format("Properties are not allowed on grain interfaces:  {0}.{1}.",
-                    type.FullName, property.Name));
-            }
-
-            return success;
-        }
-
-        /// <summary>
-        /// decide whether the class is derived from Grain
-        /// </summary>
-        private static bool IsPureObserverInterface(Type t)
-        {
-            if (!typeof (IGrainObserver).IsAssignableFrom(t))
-                return false;
-
-            if (t == typeof (IGrainObserver))
-                return true;
-
-            if (t == typeof (IAddressable))
-                return false;
-
-            bool pure = false;
-            foreach (Type iface in t.GetInterfaces())
-            {
-                if (iface == typeof (IAddressable)) // skip IAddressable that will be in the list regardless
-                    continue;
-
-                if (iface == typeof (IGrainExtension))
-                    // Skip IGrainExtension, it's just a marker that can go on observer or grain interfaces
-                    continue;
-
-                pure = IsPureObserverInterface(iface);
-                if (!pure)
-                    return false;
-            }
-
-            return pure;
-        }
-
-        private class MethodInfoComparer : IEqualityComparer<MethodInfo>
+        private sealed class MethodInfoComparer : IEqualityComparer<MethodInfo>
         {
             public bool Equals(MethodInfo x, MethodInfo y)
             {
-                return ComputeMethodId(x) == ComputeMethodId(y);
+                return x == y || ComputeMethodId(x) == ComputeMethodId(y);
             }
 
             public int GetHashCode(MethodInfo obj)
             {
-                throw new NotImplementedException();
+                return ComputeMethodId(obj);
             }
         }
 
@@ -385,34 +142,30 @@ namespace Orleans.CodeGeneration
         /// <param name="methodInfos">Accumulated </param>
         private static void GetMethodsImpl(Type grainType, Type serviceType, List<MethodInfo> methodInfos)
         {
-            Type[] iTypes = GetRemoteInterfaces(serviceType, false).Values.ToArray();
-
-
-            foreach (Type iType in iTypes)
+            foreach (var iType in GetRemoteInterfaces(serviceType, false))
             {
-                var mapping = new InterfaceMapping();
-                
                 if (grainType.IsClass)
-                    mapping = grainType.GetTypeInfo().GetRuntimeInterfaceMap(iType);
-
-                if (grainType.IsInterface || mapping.TargetType == grainType)
                 {
-                    foreach (var methodInfo in iType.GetMethods())
+                    var mapping = grainType.GetInterfaceMap(iType);
+                    foreach (var methodInfo in iType.GetMethods(BindingFlags.Instance | BindingFlags.Public))
                     {
-                        if (grainType.IsClass)
+                        foreach (var info in mapping.TargetMethods)
                         {
-                            var mi = methodInfo;
-                            var match = mapping.TargetMethods.Any(info => MethodComparer.Equals(mi, info) &&
-                                info.DeclaringType == grainType);
-
-                            if (match)
-                                if (!methodInfos.Contains(mi, MethodComparer))
-                                    methodInfos.Add(mi);
+                            if (info.DeclaringType == grainType && MethodComparer.Equals(methodInfo, info))
+                            {
+                                if (!methodInfos.Contains(methodInfo, MethodComparer))
+                                    methodInfos.Add(methodInfo);
+                                break;
+                            }
                         }
-                        else if (!methodInfos.Contains(methodInfo, MethodComparer))
-                        {
+                    }
+                }
+                else if (grainType.IsInterface)
+                {
+                    foreach (var methodInfo in iType.GetMethods(BindingFlags.Instance | BindingFlags.Public))
+                    {
+                        if (!methodInfos.Contains(methodInfo, MethodComparer))
                             methodInfos.Add(methodInfo);
-                        }
                     }
                 }
             }
@@ -420,15 +173,20 @@ namespace Orleans.CodeGeneration
 
         private static int GetTypeCode(Type grainInterfaceOrClass)
         {
-            var attr = grainInterfaceOrClass.GetCustomAttributes<TypeCodeOverrideAttribute>(false).FirstOrDefault();
-            if (attr != null) return attr.TypeCode;
+            var attrs = grainInterfaceOrClass.GetCustomAttributes(typeof(TypeCodeOverrideAttribute), false);
+            if (attrs.Length > 0) return ((TypeCodeOverrideAttribute)attrs[0]).TypeCode;
 
-            var fullName = TypeUtils.GetTemplatedName(
-                TypeUtils.GetFullName(grainInterfaceOrClass), 
-                grainInterfaceOrClass,
-                grainInterfaceOrClass.GetGenericArguments(),
-                t => false);
+            var fullName = GetFullName(grainInterfaceOrClass);
             return Utils.CalculateIdHash(fullName);
+        }
+
+        public static string GetFullName(Type grainInterfaceOrClass)
+        {
+            return TypeUtils.GetTemplatedName(
+                TypeUtils.GetFullName(grainInterfaceOrClass),
+                grainInterfaceOrClass,
+                grainInterfaceOrClass.GetGenericArgumentsSafe(),
+                t => false);
         }
     }
 }

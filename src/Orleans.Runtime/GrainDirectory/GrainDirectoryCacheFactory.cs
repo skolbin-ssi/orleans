@@ -23,25 +23,22 @@ namespace Orleans.Runtime.GrainDirectory
             }
         }
 
-        internal static DedicatedAsynchAgent CreateGrainDirectoryCacheMaintainer(
+        internal static AdaptiveDirectoryCacheMaintainer CreateGrainDirectoryCacheMaintainer(
             LocalGrainDirectory router,
             IGrainDirectoryCache cache,
             IInternalGrainFactory grainFactory,
-            ExecutorService executorService,
             ILoggerFactory loggerFactory)
         {
             var adaptiveCache = cache as AdaptiveGrainDirectoryCache;
             return adaptiveCache != null
-                ? new AdaptiveDirectoryCacheMaintainer(router, adaptiveCache, grainFactory, executorService, loggerFactory)
+                ? new AdaptiveDirectoryCacheMaintainer(router, adaptiveCache, grainFactory, loggerFactory)
                 : null;
         }
     }
 
     internal class NullGrainDirectoryCache : IGrainDirectoryCache
     {
-        private static readonly List<Tuple<GrainId, IReadOnlyList<Tuple<SiloAddress, ActivationId>>, int>> EmptyList = new List<Tuple<GrainId, IReadOnlyList<Tuple<SiloAddress, ActivationId>>, int>>();
-
-        public void AddOrUpdate(GrainId key, IReadOnlyList<Tuple<SiloAddress, ActivationId>> value, int version)
+        public void AddOrUpdate(ActivationAddress value, int version)
         {
         }
 
@@ -54,16 +51,16 @@ namespace Orleans.Runtime.GrainDirectory
         {
         }
 
-        public bool LookUp(GrainId key, out IReadOnlyList<Tuple<SiloAddress, ActivationId>> result, out int version)
+        public bool LookUp(GrainId key, out ActivationAddress result, out int version)
         {
-            result = default(IReadOnlyList<Tuple<SiloAddress, ActivationId>>);
-            version = default(int);
+            result = default;
+            version = default;
             return false;
         }
 
-        public IReadOnlyList<Tuple<GrainId, IReadOnlyList<Tuple<SiloAddress, ActivationId>>, int>> KeyValues
+        public IEnumerable<(ActivationAddress ActivationAddress, int Version)> KeyValues
         {
-            get { return EmptyList; }
+            get { yield break; }
         }
     }
 }

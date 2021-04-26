@@ -4,8 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Orleans.CodeGenerator.MSBuild;
 
 namespace Microsoft.Orleans.CodeGenerator.MSBuild
@@ -23,6 +21,12 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
 
             try
             {
+                if (args.Length < 1 || args[0] != "SourceToSource")
+                {
+                    PrintUsage();
+                    return -1;
+                }
+
                 return SourceToSource(args.Skip(1).ToArray());
             }
             catch (Exception ex)
@@ -34,10 +38,40 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
 
         private static void PrintUsage()
         {
-            Console.WriteLine("Usage: /in:<grain assembly filename> /out:<fileName for output file> /r:<reference assemblies>");
-            Console.WriteLine("       @<arguments fileName> - Arguments will be read and processed from this file.");
+            Console.WriteLine("Usage: SourceToSource ARGUMENT_FILE");
             Console.WriteLine();
-            Console.WriteLine("Example: /in:MyGrain.dll /out:C:\\OrleansSample\\MyGrain\\obj\\Debug\\MyGrain.orleans.g.cs /r:Orleans.dll;..\\MyInterfaces\\bin\\Debug\\MyInterfaces.dll");
+            Console.WriteLine("ARGUMENT_FILE is a file containing a list of arguments each on their own line.");
+            Console.WriteLine("The following arguments are available:");
+            Console.WriteLine();
+            Console.WriteLine("Options:");
+            Console.WriteLine("       AssemblyName:NAME    Specify the assembly name of the project being");
+            Console.WriteLine("                            processed.");
+            Console.WriteLine("       CodeGenOutputFile:PATH");
+            Console.WriteLine("                            Specify the output file for the generated code.");
+            Console.WriteLine("       Compile:PATH         Specify a file to be processed for generation. This");
+            Console.WriteLine("                            argument can be specified multiple times.");
+            Console.WriteLine("       DebuggerStepThrough:BOOL");
+            Console.WriteLine("                            Whether to add DebuggerStepThroughAttribute to");
+            Console.WriteLine("                            generated code.");
+            Console.WriteLine("       DefineConstants:CONSTANTS");
+            Console.WriteLine("                            Specify a list of constants. This argument can be");
+            Console.WriteLine("                            specified multiple times.");
+            Console.WriteLine("                            CONSTANTS is a comma delimited list of KEY=VALUE");
+            Console.WriteLine("                            pairs.");
+            Console.WriteLine("       LogLevel:LOG_LEVEL   Specify the log level used during generation for");
+            Console.WriteLine("                            logging output.");
+            Console.WriteLine("                            LOG_LEVEL can be one of \"Critical\", \"Debug\", \"Error\",");
+            Console.WriteLine("                            \"Information\", \"None\", \"Trace\", \"Warning\".");
+            Console.WriteLine("       OutputType:OUTPUT_TYPE");
+            Console.WriteLine("                            Specify the project output type.");
+            Console.WriteLine("                            OUTPUT_TYPE can be one of \"Exe\", \"Library\"");
+            Console.WriteLine("       ProjectGuid:GUID     Specify the MSBuild project Guid.");
+            Console.WriteLine("       ProjectPath:PATH     Specify the path to the project.");
+            Console.WriteLine("       Reference:PATH       Specify a file to be treated as a source reference.");
+            Console.WriteLine("                            This argument can be specified multiple times.");
+            Console.WriteLine("       TargetPath:PATH      Specify the path for the primary output file of the");
+            Console.WriteLine("                            project to be processed.");
+            Console.WriteLine("       WaitForDebugger      Pause until a debugger has attached to the process.");
         }
 
         private static int SourceToSource(string[] args)
@@ -51,8 +85,6 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
             using (new AssemblyResolver())
             {
                 var cmd = new CodeGeneratorCommand();
-                var logLevel = LogLevel.Warning;
-
                 var argsFile = args[0].Trim('"');
                 if (!File.Exists(argsFile)) throw new ArgumentException($"Arguments file \"{argsFile}\" does not exist.");
 
@@ -108,34 +140,17 @@ namespace Microsoft.Orleans.CodeGenerator.MSBuild
                         case nameof(cmd.DebuggerStepThrough):
                             cmd.DebuggerStepThrough = bool.Parse(value);
                             break;
-                        case nameof(LogLevel):
-                            if (!Enum.TryParse(ignoreCase: true, value: value, result: out logLevel))
-                            {
-                                var validValues = string.Join(", ", Enum.GetNames(typeof(LogLevel)).Select(v => v.ToString()));
-                                Console.WriteLine($"ERROR: \"{value}\" is not a valid log level. Valid values are {validValues}");
-                                return -3;
-                            }
-
+                        case "InputHash":
+                            break;
+                        case "LogLevel":
                             break;
                         default:
+                            PrintUsage();
                             throw new ArgumentOutOfRangeException($"Key \"{key}\" in argument file is unknown.");
                     }
                 }
 
-                var services = new ServiceCollection()
-                    .AddLogging(logging =>
-                    {
-                        logging
-                        .SetMinimumLevel(logLevel)
-                        .AddConsole()
-                        .AddDebug();
-                    })
-                    .BuildServiceProvider();
-                cmd.Log = services.GetRequiredService<ILoggerFactory>().CreateLogger("Orleans.CodeGenerator");
-                var stopwatch = Stopwatch.StartNew();
                 var ok = cmd.Execute(CancellationToken.None).GetAwaiter().GetResult();
-                cmd.Log.LogInformation($"Total code generation time: {stopwatch.ElapsedMilliseconds}ms.");
-
                 if (ok) return 0;
             }
 

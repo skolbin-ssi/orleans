@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Linq;
 using Orleans.Tests.SqlUtils;
 using Orleans.TestingHost.Utils;
 using System;
@@ -59,7 +59,7 @@ namespace UnitTests.StorageTests.Relational
                 new StorageConnection
                 {
                     StorageInvariant = AdoNetInvariants.InvariantNameSqlServer,
-                    ConnectionString = @"Data Source = (localdb)\MSSQLLocalDB; Database = master; Integrated Security = True; Asynchronous Processing = True; Max Pool Size = 200; MultipleActiveResultSets = True"
+                    ConnectionString = @"Data Source = (localdb)\MSSQLLocalDB; Database = master; Integrated Security = True; Max Pool Size = 200; MultipleActiveResultSets = True"
                 },
                 new StorageConnection
                 {
@@ -129,7 +129,7 @@ namespace UnitTests.StorageTests.Relational
         {
             string customTestSettingsFileLocation = System.Environment.GetEnvironmentVariable(EnvVariableForCustomSettingLocation, EnvironmentVariableTarget.User) ?? FallBackCustomTestSettingsFileLocation;
 
-            var codeBaseUrl = new Uri(Assembly.GetExecutingAssembly().CodeBase);
+            var codeBaseUrl = new Uri(Assembly.GetExecutingAssembly().Location);
             var codeBasePath = Uri.UnescapeDataString(codeBaseUrl.AbsolutePath);
             var dirPath = Path.GetDirectoryName(codeBasePath);
             var customFileLoc = Path.Combine(dirPath, customTestSettingsFileLocation);

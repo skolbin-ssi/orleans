@@ -49,7 +49,7 @@ namespace Orleans.Runtime
             IAppEnvironmentStatistics appEnvironmentStatistics,
             IHostEnvironmentStatistics hostEnvironmentStatistics,
             IOptions<LoadSheddingOptions> loadSheddingOptions)
-            : base(Constants.DeploymentLoadPublisherSystemTargetId, siloDetails.SiloAddress, loggerFactory)
+            : base(Constants.DeploymentLoadPublisherSystemTargetType, siloDetails.SiloAddress, loggerFactory)
         {
             this.logger = loggerFactory.CreateLogger<DeploymentLoadPublisher>();
             this.siloDetails = siloDetails;
@@ -72,10 +72,9 @@ namespace Orleans.Runtime
             logger.Info("Starting DeploymentLoadPublisher.");
             if (statisticsRefreshTime > TimeSpan.Zero)
             {
-                var random = new SafeRandom();
                 // Randomize PublishStatistics timer,
                 // but also upon start publish my stats to everyone and take everyone's stats for me to start with something.
-                var randomTimerOffset = random.NextTimeSpan(statisticsRefreshTime);
+                var randomTimerOffset = ThreadSafeRandom.NextTimeSpan(statisticsRefreshTime);
                 this.publishTimer = this.RegisterTimer(PublishStatistics, null, randomTimerOffset, statisticsRefreshTime, "DeploymentLoadPublisher.PublishStatisticsTimer");
             }
             await RefreshStatistics();
@@ -88,7 +87,7 @@ namespace Orleans.Runtime
             try
             {
                 if(logger.IsEnabled(LogLevel.Debug)) logger.Debug("PublishStatistics.");
-                List<SiloAddress> members = this.siloStatusOracle.GetApproximateSiloStatuses(true).Keys.ToList();
+                var members = this.siloStatusOracle.GetApproximateSiloStatuses(true).Keys;
                 var tasks = new List<Task>();
                 var activationCount = this.activationDirectory.Count;
                 var recentlyUsedActivationCount = this.activationCollector.GetNumRecentlyUsed(TimeSpan.FromMinutes(10));
@@ -105,7 +104,7 @@ namespace Orleans.Runtime
                     try
                     {
                         tasks.Add(this.grainFactory.GetSystemTarget<IDeploymentLoadPublisher>(
-                            Constants.DeploymentLoadPublisherSystemTargetId, siloAddress)
+                            Constants.DeploymentLoadPublisherSystemTargetType, siloAddress)
                             .UpdateRuntimeStatistics(this.siloDetails.SiloAddress, myStats));
                     }
                     catch (Exception)
@@ -143,14 +142,14 @@ namespace Orleans.Runtime
         internal async Task<ConcurrentDictionary<SiloAddress, SiloRuntimeStatistics>> RefreshStatistics()
         {
             if (logger.IsEnabled(LogLevel.Debug)) logger.Debug("RefreshStatistics.");
-            await this.scheduler.RunOrQueueTask( () =>
+            await this.scheduler.RunOrQueueTask(() =>
                 {
                     var tasks = new List<Task>();
-                    List<SiloAddress> members = this.siloStatusOracle.GetApproximateSiloStatuses(true).Keys.ToList();
+                    var members = this.siloStatusOracle.GetApproximateSiloStatuses(true).Keys;
                     foreach (var siloAddress in members)
                     {
                         var capture = siloAddress;
-                        Task task = this.grainFactory.GetSystemTarget<ISiloControl>(Constants.SiloControlId, capture)
+                        Task task = this.grainFactory.GetSystemTarget<ISiloControl>(Constants.SiloControlType, capture)
                                 .GetRuntimeStatistics()
                                 .ContinueWith((Task<SiloRuntimeStatistics> statsTask) =>
                                     {
@@ -169,7 +168,7 @@ namespace Orleans.Runtime
                         task.Ignore();
                     }
                     return Task.WhenAll(tasks);
-                }, SchedulingContext);
+                }, this);
             return periodicStats;
         }
 
@@ -223,9 +222,7 @@ namespace Orleans.Runtime
 
             if (Equals(updatedSilo, this.Silo))
                 this.publishTimer.Dispose();
-
-            SiloRuntimeStatistics ignore;
-            periodicStats.TryRemove(updatedSilo, out ignore);
+            periodicStats.TryRemove(updatedSilo, out _);
             NotifyAllStatisticsChangeEventsSubscribers(updatedSilo, null);
         }
     }

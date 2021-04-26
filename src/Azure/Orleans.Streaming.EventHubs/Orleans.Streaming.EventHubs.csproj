@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <PackageId>Microsoft.Orleans.OrleansServiceBus</PackageId>
+    <PackageId>Microsoft.Orleans.Streaming.EventHubs</PackageId>
     <Title>Microsoft Orleans EventHubs Provider</Title>
     <Description>Microsoft Orleans. streaming provider for Azure EventHubs</Description>
     <PackageTags>$(PackageTags) Azure EventHubs</PackageTags>
@@ -10,24 +10,22 @@
 
   <PropertyGroup>
     <AssemblyName>Orleans.Streaming.EventHubs</AssemblyName>
-    <RootNamespace>OrleansServiceBus</RootNamespace>
+    <RootNamespace>Orleans.Streaming.EventHubs</RootNamespace>
     <OrleansBuildTimeCodeGen>true</OrleansBuildTimeCodeGen>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="..\Shared\Storage\AzureTableDataManager.cs" Link="Storage\AzureTableDataManager.cs" />
-    <Compile Include="..\Shared\Storage\AzureTableDefaultPolicies.cs" Link="Storage\AzureTableDefaultPolicies.cs" />
     <Compile Include="..\Shared\Storage\AzureTableUtils.cs" Link="Storage\AzureTableUtils.cs" />
+    <Compile Include="..\Shared\Storage\AzureStorageOperationOptions.cs" Link="Storage\AzureStorageOperationOptions.cs" />
+    <Compile Include="..\Shared\Storage\AzureStoragePolicyOptions.cs" Link="Storage\AzureStoragePolicyOptions.cs" />
     <Compile Include="..\Shared\Utilities\ErrorCode.cs" Link="Utilities\ErrorCode.cs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Core" Version="$(AzureCoreVersion)" />
     <PackageReference Include="Microsoft.Azure.Cosmos.Table" Version="$(MicrosoftAzureCosmosTableVersion)" />
-    <PackageReference Include="Microsoft.Azure.EventHubs" Version="$(MicrosoftAzureEventHubsVersion)" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Storage\" />
-    <Folder Include="Utilities\" />
+    <PackageReference Include="System.Net.NameResolution" Version="$(SystemNetNameResolutionVersion)" />
+    <PackageReference Include="Azure.Messaging.EventHubs" Version="$(AzureMessagingEventHubs)" />
   </ItemGroup>
 </Project>

@@ -1,5 +1,8 @@
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Orleans;
 using Orleans.Configuration;
 using Orleans.Hosting;
 using Orleans.Providers.Streams.AzureQueue;
@@ -19,43 +22,46 @@ namespace Tester.AzureUtils.Streaming
         {
             protected override void ConfigureTestCluster(TestClusterBuilder builder)
             {
-                builder.AddSiloBuilderConfigurator<MySiloBuilderConfigurator>();
+                builder.AddSiloBuilderConfigurator<TestClusterConfigurator>();
+                builder.AddClientBuilderConfigurator<TestClusterConfigurator>();
             }
 
-            private class MySiloBuilderConfigurator : ISiloBuilderConfigurator
+            private class TestClusterConfigurator : ISiloConfigurator, IClientBuilderConfigurator
             {
-                public void Configure(ISiloHostBuilder hostBuilder)
+                public void Configure(ISiloBuilder hostBuilder)
                 {
                     hostBuilder
                         .AddAzureQueueStreams(StreamProviderName2, ob=>ob.Configure<IOptions<ClusterOptions>>(
                             (options, dep) =>
                             {
-                                options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                                options.ConfigureTestDefaults();
                                 options.QueueNames = AzureQueueUtilities.GenerateQueueNames($"{dep.Value.ClusterId}2", queueCount);
                         }))
                         .AddAzureQueueStreams(StreamProviderName, ob => ob.Configure<IOptions<ClusterOptions>>(
                             (options, dep) =>
                             {
-                                options.ConnectionString = TestDefaultConfiguration.DataConnectionString;
+                                options.ConfigureTestDefaults();
                                 options.QueueNames = AzureQueueUtilities.GenerateQueueNames(dep.Value.ClusterId, queueCount);
                         }));
                     hostBuilder
                         .AddMemoryGrainStorageAsDefault()
                         .AddMemoryGrainStorage("PubSubStore");
                 }
+
+                public void Configure(IConfiguration configuration, IClientBuilder clientBuilder) => clientBuilder.AddStreaming();
             }
 
-            public override void Dispose()
+            public override async Task DisposeAsync()
             {
-                base.Dispose();
+                await base.DisposeAsync();
 
                 // Only perform cleanup if this suite was not skipped.
-                if (this.HostedCluster != null)
+                if (!string.IsNullOrWhiteSpace(TestDefaultConfiguration.DataConnectionString))
                 {
-                    AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
-                        AzureQueueUtilities.GenerateQueueNames(this.HostedCluster.Options.ClusterId, queueCount), TestDefaultConfiguration.DataConnectionString).Wait();
-                    AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
-                        AzureQueueUtilities.GenerateQueueNames($"{this.HostedCluster.Options.ClusterId}2", queueCount), TestDefaultConfiguration.DataConnectionString).Wait();
+                    await AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
+                        AzureQueueUtilities.GenerateQueueNames(this.HostedCluster.Options.ClusterId, queueCount), new AzureQueueOptions().ConfigureTestDefaults());
+                    await AzureQueueStreamProviderUtils.DeleteAllUsedAzureQueues(NullLoggerFactory.Instance,
+                        AzureQueueUtilities.GenerateQueueNames($"{this.HostedCluster.Options.ClusterId}2", queueCount), new AzureQueueOptions().ConfigureTestDefaults());
                 }
             }
         }

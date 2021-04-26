@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 
 namespace Orleans.Networking.Shared
 {
@@ -22,17 +23,10 @@ namespace Orleans.Networking.Shared
                 return SendAsync(buffers.First);
             }
 
-#if NETSTANDARD2_1
             if (!_awaitableEventArgs.Equals(Memory<byte>.Empty))
             {
                 _awaitableEventArgs.SetBuffer(null, 0, 0);
             }
-#else
-            if (!Array.Empty<byte>().Equals(_awaitableEventArgs.Buffer))
-            {
-                _awaitableEventArgs.SetBuffer(null, 0, 0);
-            }
-#endif
 
             _awaitableEventArgs.BufferList = GetBufferList(buffers);
 
@@ -52,12 +46,7 @@ namespace Orleans.Networking.Shared
                 _awaitableEventArgs.BufferList = null;
             }
 
-#if NETSTANDARD2_1
             _awaitableEventArgs.SetBuffer(MemoryMarshal.AsMemory(memory));
-#else
-            var array = memory.GetArray();
-            _awaitableEventArgs.SetBuffer(array.Array, array.Offset, array.Count);
-#endif
 
             if (!_socket.SendAsync(_awaitableEventArgs))
             {

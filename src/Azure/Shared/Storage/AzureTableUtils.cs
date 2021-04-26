@@ -25,6 +25,8 @@ namespace Orleans.Streaming.EventHubs
 namespace Orleans.Tests.AzureUtils
 #elif ORLEANS_TRANSACTIONS
 namespace Orleans.Transactions.AzureStorage
+#elif ORLEANS_DIRECTORY
+namespace Orleans.GrainDirectory.AzureStorage
 #else
 // No default namespace intentionally to cause compile errors if something is not defined
 #endif
@@ -34,7 +36,7 @@ namespace Orleans.Transactions.AzureStorage
     /// </summary>
     internal static class AzureTableConstants
     {
-        public const string ANY_ETAG = StorageProviderUtils.ANY_ETAG;
+        public const string ANY_ETAG = "*";
 
         public const string PKProperty = nameof(TableEntity.PartitionKey);
         public const string RKProperty = nameof(TableEntity.RowKey);

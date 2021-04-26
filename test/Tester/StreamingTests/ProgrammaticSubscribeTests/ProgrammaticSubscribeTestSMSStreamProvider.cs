@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+using Orleans;
 using Orleans.Hosting;
 using Orleans.Streams;
 using Orleans.TestingHost;
@@ -14,23 +16,25 @@ namespace Tester.StreamingTests.ProgrammaticSubscribeTests
         {
             protected override void ConfigureTestCluster(TestClusterBuilder builder)
             {
-                builder.AddSiloBuilderConfigurator<SiloConfigurator>();
+                builder.AddSiloBuilderConfigurator<TestClusterConfigurator>();
+                builder.AddClientBuilderConfigurator<TestClusterConfigurator>();
             }
         }
 
-        public class SiloConfigurator : ISiloBuilderConfigurator
+        public class TestClusterConfigurator : ISiloConfigurator, IClientBuilderConfigurator
         {
-            public void Configure(ISiloHostBuilder hostBuilder)
+            public void Configure(ISiloBuilder hostBuilder)
             {
                 hostBuilder.AddSimpleMessageStreamProvider(StreamProviderName);
                 hostBuilder.AddSimpleMessageStreamProvider(StreamProviderName2, options => options.PubSubType = StreamPubSubType.ExplicitGrainBasedOnly)
                     .AddMemoryGrainStorageAsDefault()
                         .AddMemoryGrainStorage("PubSubStore");
             }
+
+            public void Configure(IConfiguration configuration, IClientBuilder clientBuilder) => clientBuilder.AddStreaming();
         }
 
-        public ProgrammaticSubscribeTestSMSStreamProvider(ITestOutputHelper output, Fixture fixture)
-            :base(fixture)
+        public ProgrammaticSubscribeTestSMSStreamProvider(ITestOutputHelper output, Fixture fixture) : base(fixture)
         {
         }
     }

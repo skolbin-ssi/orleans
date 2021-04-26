@@ -1,6 +1,5 @@
-﻿using System;
+using System;
 using Orleans.Core;
-using Orleans.Streams;
 using Orleans.Timers;
 
 namespace Orleans.Runtime
@@ -38,6 +37,6 @@ namespace Orleans.Runtime
 
         void DelayDeactivation(Grain grain, TimeSpan timeSpan);
 
-        IStorage<TGrainState> GetStorage<TGrainState>(Grain grain) where TGrainState : new();
+        IStorage<TGrainState> GetStorage<TGrainState>(Grain grain);
     }
 }
